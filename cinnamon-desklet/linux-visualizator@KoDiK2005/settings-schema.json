@@ -22,6 +22,12 @@
         "description": "Непрозрачность фона",
         "tooltip": "0 — почти прозрачный, 255 — полностью непрозрачный."
     },
+    "click-command": {
+        "type": "entry",
+        "default": "gnome-system-monitor",
+        "description": "Команда по клику",
+        "tooltip": "Запускается по левому клику на десклете. Пусто — отключить."
+    },
 
     "head-cpu": {
         "type": "header",

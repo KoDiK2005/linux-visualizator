@@ -187,7 +187,7 @@ function collectCpuTemperatureC(tempFilePath) {
 
 function collectMemory() {
     let text = readFile('/proc/meminfo');
-    if (!text) return { percent: 0, swapPercent: 0 };
+    if (!text) return { percent: 0, swapPercent: 0, totalBytes: 0, usedBytes: 0, swapTotalBytes: 0 };
 
     let readField = (name) => {
         let m = text.match(new RegExp(name + ':\\s+(\\d+)'));
@@ -201,7 +201,14 @@ function collectMemory() {
     return {
         percent: total > 0 ? (100 * (total - available)) / total : 0,
         swapPercent: swapTotal > 0 ? (100 * (swapTotal - swapFree)) / swapTotal : 0,
+        totalBytes: total,
+        usedBytes: total - available,
+        swapTotalBytes: swapTotal,
     };
+}
+
+function bytesToGB(bytes) {
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1);
 }
 
 function collectNetwork(prevState, elapsedSec, interfaceFilter) {
@@ -298,6 +305,7 @@ LinuxVisualizatorDesklet.prototype = {
         this.settings = new Settings.DeskletSettings(this, metadata.uuid, deskletId);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'refresh-interval', 'refreshInterval', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'background-opacity', 'backgroundOpacity', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'click-command', 'clickCommand', null);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu', 'showCpu', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'cpu-view', 'cpuView', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu-freq', 'showCpuFreq', this._onSettingsChanged);
@@ -341,6 +349,18 @@ LinuxVisualizatorDesklet.prototype = {
         if (this._animationTimeoutId) Mainloop.source_remove(this._animationTimeoutId);
     },
 
+    // Левый клик (без перетаскивания) открывает системный монитор — быстрый доступ
+    // к детальной информации, не перегружая сам десклет процессами/деталями.
+    on_desklet_clicked: function (event) {
+        let command = (this.clickCommand || '').trim();
+        if (!command) return;
+        try {
+            GLib.spawn_command_line_async(command);
+        } catch (e) {
+            global.logError('linux-visualizator: не удалось запустить "' + command + '": ' + e);
+        }
+    },
+
     _onSettingsChanged: function () {
         if (this._timeoutId) {
             Mainloop.source_remove(this._timeoutId);
@@ -371,6 +391,9 @@ LinuxVisualizatorDesklet.prototype = {
             let mem = collectMemory();
             this._memPercent = mem.percent;
             this._swapPercent = mem.swapPercent;
+            this._memTotalBytes = mem.totalBytes;
+            this._memUsedBytes = mem.usedBytes;
+            this._hasSwap = mem.swapTotalBytes > 0;
             this._memSmoother.setTarget(mem.percent);
             this._swapSmoother.setTarget(mem.swapPercent);
         }
@@ -455,7 +478,7 @@ LinuxVisualizatorDesklet.prototype = {
             y += h + SECTION_SPACING;
         }
         if (this.showMem) {
-            let h = HEADER_HEIGHT + BAR_HEIGHT * 2 + BAR_SPACING;
+            let h = HEADER_HEIGHT + BAR_HEIGHT + (this._hasSwap ? BAR_HEIGHT + BAR_SPACING : 0);
             sections.push({ type: 'mem', y, height: h, label: 'ПАМЯТЬ', color: COLOR_MEM });
             y += h + SECTION_SPACING;
         }
@@ -541,6 +564,7 @@ LinuxVisualizatorDesklet.prototype = {
     },
 
     _drawSectionHeader: function (ctx, label, color, statText, contentWidth) {
+        ctx.newSubPath();
         ctx.setSourceRGBA(color[0], color[1], color[2], 0.9);
         ctx.arc(3, 5, 3, 0, 2 * Math.PI);
         ctx.fill();
@@ -581,6 +605,10 @@ LinuxVisualizatorDesklet.prototype = {
             ctx.setLineWidth(RING_THICKNESS);
             ctx.setLineCap(Cairo.LineCap.ROUND);
 
+            // newSubPath обязателен: без него arc() продолжит путь от точки, оставленной
+            // предыдущей операцией (например, showText предыдущего кольца), и получится
+            // паразитная линия, соединяющая кольца между собой.
+            ctx.newSubPath();
             ctx.setSourceRGBA(1, 1, 1, 0.12);
             ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
             ctx.stroke();
@@ -628,8 +656,15 @@ LinuxVisualizatorDesklet.prototype = {
     },
 
     _drawMemBars: function (ctx, width) {
-        this._drawBar(ctx, 0, width, this._memSmoother.value, 'RAM ' + Math.round(this._memSmoother.value) + '%', severityColor(COLOR_MEM, this._memSmoother.value), 1.0);
-        this._drawBar(ctx, BAR_HEIGHT + BAR_SPACING, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', COLOR_MEM, 0.5);
+        let ramLabel = 'RAM ' + Math.round(this._memSmoother.value) + '%';
+        if (this._memTotalBytes) {
+            ramLabel += '  (' + bytesToGB(this._memUsedBytes) + '/' + bytesToGB(this._memTotalBytes) + ' GB)';
+        }
+        this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(COLOR_MEM, this._memSmoother.value), 1.0);
+
+        if (this._hasSwap) {
+            this._drawBar(ctx, BAR_HEIGHT + BAR_SPACING, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', COLOR_MEM, 0.5);
+        }
     },
 
     _drawDiskUsage: function (ctx, width) {
