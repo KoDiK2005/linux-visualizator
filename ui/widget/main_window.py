@@ -1,10 +1,13 @@
 """Прозрачное frameless-окно десклета, которое можно перетаскивать по рабочему столу."""
 
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.models import SystemSnapshot
 from ui.widget import theme
+from ui.widget.panels.cpu_panel import CpuPanel
+from ui.widget.panels.mem_panel import MemPanel
+from ui.widget.panels.net_panel import NetPanel
 
 
 class MainWindow(QWidget):
@@ -24,27 +27,27 @@ class MainWindow(QWidget):
 
         self._drag_offset: QPoint | None = None
 
-        self.cpu_label = QLabel("CPU: --%")
-        self.mem_label = QLabel("RAM: --%")
-        self.net_label = QLabel("NET: -- / -- KB/s")
+        self.cpu_panel = CpuPanel()
+        self.mem_panel = MemPanel()
+        self.net_panel = NetPanel()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.addWidget(self.cpu_label)
-        layout.addWidget(self.mem_label)
-        layout.addWidget(self.net_label)
+        layout.setSpacing(10)
+        layout.addWidget(self.cpu_panel)
+        layout.addWidget(self.mem_panel)
+        layout.addWidget(self.net_panel)
 
-        self.resize(220, 100)
+        self.setLayout(layout)
+        self.adjustSize()
 
     def update_snapshot(self, snapshot: SystemSnapshot) -> None:
-        self.cpu_label.setText(f"CPU: {snapshot.cpu.total_percent:5.1f}%")
-        self.mem_label.setText(f"RAM: {snapshot.memory.percent:5.1f}%")
-
-        total_sent = sum(i.bytes_sent_per_sec for i in snapshot.network.interfaces)
-        total_recv = sum(i.bytes_recv_per_sec for i in snapshot.network.interfaces)
-        self.net_label.setText(
-            f"NET: ↑{total_sent / 1024:6.1f} KB/s  ↓{total_recv / 1024:6.1f} KB/s"
-        )
+        self.cpu_panel.update_snapshot(snapshot.cpu)
+        self.mem_panel.update_snapshot(snapshot.memory)
+        self.net_panel.update_snapshot(snapshot.network)
+        # Число ядер известно только после первого тика, поэтому окно
+        # пересчитывает размер под ширину кольцевых индикаторов CPU здесь.
+        self.adjustSize()
 
     # Перетаскивание окна мышью, т.к. у frameless-окна нет заголовка.
     def mousePressEvent(self, event):
