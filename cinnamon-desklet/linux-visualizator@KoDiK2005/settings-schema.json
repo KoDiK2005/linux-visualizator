@@ -13,20 +13,80 @@
         "description": "Интервал опроса",
         "tooltip": "Как часто опрашивать системные метрики."
     },
+    "background-opacity": {
+        "type": "spinbutton",
+        "default": 205,
+        "min": 40,
+        "max": 255,
+        "step": 5,
+        "description": "Непрозрачность фона",
+        "tooltip": "0 — почти прозрачный, 255 — полностью непрозрачный."
+    },
+
+    "head-cpu": {
+        "type": "header",
+        "description": "Процессор"
+    },
     "show-cpu": {
         "type": "switch",
         "default": true,
         "description": "Показывать CPU"
+    },
+    "cpu-view": {
+        "type": "combobox",
+        "default": "rings",
+        "options": {
+            "Кольца по ядрам": "rings",
+            "Полосы по ядрам": "bars",
+            "График общей загрузки": "graph"
+        },
+        "description": "Вид отображения CPU",
+        "tooltip": "Как показывать загрузку процессора.",
+        "dependency": "show-cpu"
+    },
+    "show-cpu-freq": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать частоту CPU",
+        "dependency": "show-cpu"
+    },
+    "show-cpu-temp": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать температуру CPU (если доступна)",
+        "dependency": "show-cpu"
+    },
+
+    "head-mem": {
+        "type": "header",
+        "description": "Память"
     },
     "show-mem": {
         "type": "switch",
         "default": true,
         "description": "Показывать RAM/Swap"
     },
+
+    "head-net": {
+        "type": "header",
+        "description": "Сеть"
+    },
     "show-net": {
         "type": "switch",
         "default": true,
         "description": "Показывать сеть"
+    },
+    "network-interface": {
+        "type": "entry",
+        "default": "",
+        "description": "Сетевой интерфейс",
+        "tooltip": "Например, wlan0 или enp3s0. Пусто — суммировать все интерфейсы, кроме lo.",
+        "dependency": "show-net"
+    },
+
+    "head-disk": {
+        "type": "header",
+        "description": "Диски"
     },
     "show-disk": {
         "type": "switch",

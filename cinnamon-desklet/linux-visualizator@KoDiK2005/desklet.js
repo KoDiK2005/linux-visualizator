@@ -9,8 +9,8 @@ const Gio = imports.gi.Gio;
 const ByteArray = imports.byteArray;
 
 // ---- тема (соответствует ui/widget/theme.py в Python-версии) ----
-const COLOR_BG_TOP = [26 / 255, 27 / 255, 34 / 255, 205 / 255];
-const COLOR_BG_BOTTOM = [16 / 255, 17 / 255, 22 / 255, 205 / 255];
+const COLOR_BG_TOP = [26 / 255, 27 / 255, 34 / 255];
+const COLOR_BG_BOTTOM = [16 / 255, 17 / 255, 22 / 255];
 const COLOR_BORDER = [1, 1, 1, 0.09];
 const COLOR_TEXT = [230 / 255, 230 / 255, 235 / 255, 1];
 const COLOR_LABEL = [150 / 255, 152 / 255, 160 / 255, 1];
@@ -146,6 +146,45 @@ function collectCpu(prevState) {
     return { perCore, state: newState };
 }
 
+// Средняя частота ядер в МГц из /proc/cpuinfo (Linux ядро публикует её без доп. привилегий,
+// в отличие от cpufreq sysfs-файлов, которые не везде читаемы без root).
+function collectCpuFrequencyMHz() {
+    let text = readFile('/proc/cpuinfo');
+    if (!text) return null;
+    let matches = [...text.matchAll(/cpu MHz\s*:\s*([\d.]+)/g)];
+    if (!matches.length) return null;
+    let sum = matches.reduce((acc, m) => acc + parseFloat(m[1]), 0);
+    return sum / matches.length;
+}
+
+// Ищет файл hwmon с температурой пакета CPU (Intel: "Package id 0", AMD: "Tctl"/"Tdie").
+// Делается один раз при старте десклета и кэшируется — сам путь не меняется на лету.
+function findCpuTempFile() {
+    let labels = ['Package id 0', 'Tctl', 'Tdie'];
+    for (let label of labels) {
+        try {
+            let argv = ['/bin/sh', '-c',
+                "grep -s -l -d skip '" + label + "' /sys/class/hwmon/*/temp*_label 2>/dev/null | sed 's/_label/_input/' | head -n 1"];
+            let proc = new Gio.Subprocess({ argv, flags: Gio.SubprocessFlags.STDOUT_PIPE });
+            proc.init(null);
+            let [, stdout] = proc.communicate_utf8(null, null);
+            let path = stdout.trim();
+            if (path) return path;
+        } catch (e) {
+            // пробуем следующую метку
+        }
+    }
+    return null;
+}
+
+function collectCpuTemperatureC(tempFilePath) {
+    if (!tempFilePath) return null;
+    let text = readFile(tempFilePath);
+    if (!text) return null;
+    let millidegrees = parseInt(text.trim());
+    return isNaN(millidegrees) ? null : millidegrees / 1000;
+}
+
 function collectMemory() {
     let text = readFile('/proc/meminfo');
     if (!text) return { percent: 0, swapPercent: 0 };
@@ -165,10 +204,11 @@ function collectMemory() {
     };
 }
 
-function collectNetwork(prevState, elapsedSec) {
+function collectNetwork(prevState, elapsedSec, interfaceFilter) {
     let text = readFile('/proc/net/dev');
     if (!text) return { recvRate: 0, sentRate: 0, state: prevState };
 
+    let filter = (interfaceFilter || '').trim();
     let totalRx = 0;
     let totalTx = 0;
     for (let line of text.split('\n').slice(2)) {
@@ -177,6 +217,7 @@ function collectNetwork(prevState, elapsedSec) {
         let parts = line.split(/[:\s]+/);
         if (parts.length < 10) continue;
         if (parts[0] === 'lo') continue;
+        if (filter && parts[0] !== filter) continue;
         totalRx += parseInt(parts[1]) || 0;
         totalTx += parseInt(parts[9]) || 0;
     }
@@ -256,17 +297,27 @@ LinuxVisualizatorDesklet.prototype = {
 
         this.settings = new Settings.DeskletSettings(this, metadata.uuid, deskletId);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'refresh-interval', 'refreshInterval', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'background-opacity', 'backgroundOpacity', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu', 'showCpu', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'cpu-view', 'cpuView', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu-freq', 'showCpuFreq', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu-temp', 'showCpuTemp', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-mem', 'showMem', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-net', 'showNet', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'network-interface', 'networkInterface', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-disk', 'showDisk', this._onSettingsChanged);
 
         this._cpuState = {};
         this._netState = null;
         this._diskIoState = null;
         this._lastTickTime = null;
+        this._cpuTempFile = findCpuTempFile();
 
         this._cpuPercents = [];
+        this._cpuAverage = 0;
+        this._cpuFreqMHz = null;
+        this._cpuTempC = null;
+        this._cpuHistory = [];
         this._memPercent = 0;
         this._swapPercent = 0;
         this._diskPartitions = [];
@@ -307,6 +358,14 @@ LinuxVisualizatorDesklet.prototype = {
             this._cpuState = cpu.state;
             this._cpuPercents.forEach((percent, idx) => this._cpuSmoother.setTarget(idx, percent));
             this._cpuSmoother.pruneExcept(this._cpuPercents.map((_, idx) => idx));
+
+            this._cpuAverage = this._cpuPercents.length
+                ? this._cpuPercents.reduce((a, b) => a + b, 0) / this._cpuPercents.length
+                : 0;
+            this._pushHistory(this._cpuHistory, this._cpuAverage);
+
+            this._cpuFreqMHz = this.showCpuFreq ? collectCpuFrequencyMHz() : null;
+            this._cpuTempC = this.showCpuTemp ? collectCpuTemperatureC(this._cpuTempFile) : null;
         }
         if (this.showMem) {
             let mem = collectMemory();
@@ -316,7 +375,7 @@ LinuxVisualizatorDesklet.prototype = {
             this._swapSmoother.setTarget(mem.swapPercent);
         }
         if (this.showNet) {
-            let net = collectNetwork(this._netState, elapsed);
+            let net = collectNetwork(this._netState, elapsed, this.networkInterface);
             this._netState = net.state;
             this._pushHistory(this._netHistory.recv, net.recvRate);
             this._pushHistory(this._netHistory.sent, net.sentRate);
@@ -372,10 +431,27 @@ LinuxVisualizatorDesklet.prototype = {
         let sections = [];
 
         if (this.showCpu && this._cpuPercents.length) {
-            let ringsWidth = this._cpuPercents.length * (RING_SIZE + RING_SPACING) + RING_SPACING;
-            width = Math.max(width, ringsWidth);
-            let h = HEADER_HEIGHT + RING_SIZE + 6;
-            sections.push({ type: 'cpu', y, height: h, label: 'ПРОЦЕССОР', color: COLOR_CPU });
+            let view = this.cpuView || 'rings';
+            let h;
+            if (view === 'bars') {
+                let count = this._cpuPercents.length;
+                h = HEADER_HEIGHT + count * BAR_HEIGHT + (count - 1) * BAR_SPACING;
+            } else if (view === 'graph') {
+                h = HEADER_HEIGHT + SPARK_HEIGHT;
+            } else {
+                let ringsWidth = this._cpuPercents.length * (RING_SIZE + RING_SPACING) + RING_SPACING;
+                width = Math.max(width, ringsWidth);
+                h = HEADER_HEIGHT + RING_SIZE + 6;
+            }
+
+            let statParts = [Math.round(this._cpuAverage) + '%'];
+            if (this.showCpuFreq && this._cpuFreqMHz) statParts.push((this._cpuFreqMHz / 1000).toFixed(1) + ' GHz');
+            if (this.showCpuTemp && this._cpuTempC !== null) statParts.push(Math.round(this._cpuTempC) + '°C');
+
+            sections.push({
+                type: 'cpu', y, height: h, label: 'ПРОЦЕССОР', color: COLOR_CPU,
+                view, statText: statParts.join('  '),
+            });
             y += h + SECTION_SPACING;
         }
         if (this.showMem) {
@@ -418,10 +494,11 @@ LinuxVisualizatorDesklet.prototype = {
         ctx.setOperator(Cairo.Operator.OVER);
 
         // фон: мягкий вертикальный градиент + тонкая обводка для отделения от обоев
+        let bgAlpha = (this.backgroundOpacity !== undefined ? this.backgroundOpacity : 205) / 255;
         this._roundedRect(ctx, 0, 0, w, h, CORNER_RADIUS);
         let bgGradient = new Cairo.LinearGradient(0, 0, 0, h);
-        bgGradient.addColorStopRGBA(0, COLOR_BG_TOP[0], COLOR_BG_TOP[1], COLOR_BG_TOP[2], COLOR_BG_TOP[3]);
-        bgGradient.addColorStopRGBA(1, COLOR_BG_BOTTOM[0], COLOR_BG_BOTTOM[1], COLOR_BG_BOTTOM[2], COLOR_BG_BOTTOM[3]);
+        bgGradient.addColorStopRGBA(0, COLOR_BG_TOP[0], COLOR_BG_TOP[1], COLOR_BG_TOP[2], bgAlpha);
+        bgGradient.addColorStopRGBA(1, COLOR_BG_BOTTOM[0], COLOR_BG_BOTTOM[1], COLOR_BG_BOTTOM[2], bgAlpha);
         ctx.setSource(bgGradient);
         ctx.fill();
 
@@ -434,11 +511,14 @@ LinuxVisualizatorDesklet.prototype = {
             ctx.save();
             ctx.translate(MARGIN, section.y);
 
-            this._drawSectionHeader(ctx, section.label, section.color);
+            this._drawSectionHeader(ctx, section.label, section.color, section.statText, contentWidth);
             ctx.translate(0, HEADER_HEIGHT);
 
-            if (section.type === 'cpu') this._drawCpuRings(ctx);
-            else if (section.type === 'mem') this._drawMemBars(ctx, contentWidth);
+            if (section.type === 'cpu') {
+                if (section.view === 'bars') this._drawCpuBars(ctx, contentWidth);
+                else if (section.view === 'graph') this._drawCpuGraph(ctx, contentWidth);
+                else this._drawCpuRings(ctx);
+            } else if (section.type === 'mem') this._drawMemBars(ctx, contentWidth);
             else if (section.type === 'net') {
                 this._drawSparkline(ctx, contentWidth, this._netHistory.recv, this._netHistory.sent, COLOR_NET_DOWN, COLOR_NET_UP, '↓', '↑');
             } else if (section.type === 'disk') {
@@ -460,7 +540,7 @@ LinuxVisualizatorDesklet.prototype = {
         });
     },
 
-    _drawSectionHeader: function (ctx, label, color) {
+    _drawSectionHeader: function (ctx, label, color, statText, contentWidth) {
         ctx.setSourceRGBA(color[0], color[1], color[2], 0.9);
         ctx.arc(3, 5, 3, 0, 2 * Math.PI);
         ctx.fill();
@@ -470,6 +550,14 @@ LinuxVisualizatorDesklet.prototype = {
         ctx.setFontSize(9);
         ctx.moveTo(12, 9);
         ctx.showText(label);
+
+        if (statText) {
+            ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
+            ctx.setFontSize(8.5);
+            let extents = ctx.textExtents(statText);
+            ctx.moveTo(contentWidth - extents.width - extents.xBearing, 9);
+            ctx.showText(statText);
+        }
     },
 
     _roundedRect: function (ctx, x, y, w, h, r) {
@@ -515,6 +603,28 @@ LinuxVisualizatorDesklet.prototype = {
 
             x += RING_SIZE + RING_SPACING;
         }
+    },
+
+    _drawCpuBars: function (ctx, width) {
+        let coreCount = this._cpuPercents.length;
+        for (let idx = 0; idx < coreCount; idx++) {
+            let percent = this._cpuSmoother.value(idx);
+            let y = idx * (BAR_HEIGHT + BAR_SPACING);
+            let label = 'Core ' + idx + '  ' + Math.round(percent) + '%';
+            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_CPU, percent), 1.0);
+        }
+    },
+
+    _drawCpuGraph: function (ctx, width) {
+        let plotTop = SPARK_LABEL_HEIGHT;
+        let plotHeight = SPARK_HEIGHT - plotTop - 2;
+        this._drawLine(ctx, this._cpuHistory, 100, width, plotTop, plotHeight, severityColor(COLOR_CPU, this._cpuAverage), true);
+
+        ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
+        ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
+        ctx.setFontSize(9);
+        ctx.moveTo(0, SPARK_LABEL_HEIGHT - 4);
+        ctx.showText('Средняя загрузка: ' + Math.round(this._cpuAverage) + '%');
     },
 
     _drawMemBars: function (ctx, width) {
