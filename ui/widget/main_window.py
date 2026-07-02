@@ -1,13 +1,17 @@
 """Прозрачное frameless-окно десклета, которое можно перетаскивать по рабочему столу."""
 
 from PySide6.QtCore import QPoint, QSettings, Qt, QTimer
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QVBoxLayout, QWidget
 
+from core.config import SamplerConfig
 from core.models import SystemSnapshot
+from core.sampler import Sampler
 from ui.widget import theme
+from ui.widget.app_settings import AppSettings, load_settings, save_settings
 from ui.widget.panels.cpu_panel import CpuPanel
 from ui.widget.panels.mem_panel import MemPanel
 from ui.widget.panels.net_panel import NetPanel
+from ui.widget.settings_dialog import SettingsDialog
 
 ANIMATION_INTERVAL_MS = 33  # ~30 fps для плавных переходов значений
 SETTINGS_POSITION_KEY = "window/position"
@@ -27,11 +31,14 @@ class MainWindow(QWidget):
             f"font-size: {theme.FONT_SIZE_PT}pt; "
             "border-radius: 12px;"
         )
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
         self._drag_offset: QPoint | None = None
         self._settings = QSettings(
             QSettings.IniFormat, QSettings.UserScope, "linux-visualizator", "desklet"
         )
+        self._app_settings: AppSettings = load_settings(self._settings)
 
         self.cpu_panel = CpuPanel()
         self.mem_panel = MemPanel()
@@ -45,6 +52,7 @@ class MainWindow(QWidget):
         layout.addWidget(self.net_panel)
 
         self.setLayout(layout)
+        self._apply_panel_visibility()
         self.adjustSize()
         self._restore_position()
 
@@ -52,6 +60,13 @@ class MainWindow(QWidget):
         self._animation_timer.setInterval(ANIMATION_INTERVAL_MS)
         self._animation_timer.timeout.connect(self._animate)
         self._animation_timer.start()
+
+        self._sampler = Sampler(SamplerConfig(interval_ms=self._app_settings.interval_ms))
+        self._sampler.on_sample(self.update_snapshot)
+        self._sample_timer = QTimer(self)
+        self._sample_timer.setInterval(self._app_settings.interval_ms)
+        self._sample_timer.timeout.connect(self._sampler.tick)
+        self._sample_timer.start()
 
     def update_snapshot(self, snapshot: SystemSnapshot) -> None:
         self.cpu_panel.update_snapshot(snapshot.cpu)
@@ -65,6 +80,11 @@ class MainWindow(QWidget):
         self.cpu_panel.animate()
         self.mem_panel.animate()
 
+    def _apply_panel_visibility(self) -> None:
+        self.cpu_panel.setVisible(self._app_settings.show_cpu)
+        self.mem_panel.setVisible(self._app_settings.show_mem)
+        self.net_panel.setVisible(self._app_settings.show_net)
+
     def _restore_position(self) -> None:
         saved = self._settings.value(SETTINGS_POSITION_KEY)
         if saved is not None:
@@ -72,6 +92,32 @@ class MainWindow(QWidget):
 
     def _save_position(self) -> None:
         self._settings.setValue(SETTINGS_POSITION_KEY, self.pos())
+
+    def _show_context_menu(self, pos: QPoint) -> None:
+        menu = QMenu(self)
+        settings_action = menu.addAction("Настройки…")
+        menu.addSeparator()
+        quit_action = menu.addAction("Выход")
+
+        chosen = menu.exec(self.mapToGlobal(pos))
+        if chosen == settings_action:
+            self._open_settings()
+        elif chosen == quit_action:
+            QApplication.instance().quit()
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self._app_settings, self)
+        if dialog.exec() != SettingsDialog.Accepted:
+            return
+
+        new_settings = dialog.result_settings(self._app_settings)
+        self._app_settings = new_settings
+        save_settings(self._settings, new_settings)
+
+        self._apply_panel_visibility()
+        self.adjustSize()
+        self._sample_timer.setInterval(new_settings.interval_ms)
+        self._sampler.config.interval_ms = new_settings.interval_ms
 
     # Перетаскивание окна мышью, т.к. у frameless-окна нет заголовка.
     def mousePressEvent(self, event):
