@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QWidget
 
 from core.models import DiskSnapshot, PartitionUsage
 from ui.widget import theme
+from ui.widget.severity import severity_color
 
 BAR_HEIGHT = 12
 BAR_SPACING = 4
@@ -49,7 +50,7 @@ class DiskUsagePanel(QWidget):
         painter.setBrush(QColor(255, 255, 255, 30))
         painter.drawRoundedRect(bg_rect, 4, 4)
 
-        fill_color = QColor(theme.ACCENT_DISK)
+        fill_color = severity_color(theme.ACCENT_DISK, percent)
         fill_width = width * min(percent, 100.0) / 100.0
         fill_rect = QRectF(0, y, fill_width, BAR_HEIGHT)
         painter.setBrush(fill_color)
