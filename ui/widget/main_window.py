@@ -9,6 +9,8 @@ from core.sampler import Sampler
 from ui.widget import theme
 from ui.widget.app_settings import AppSettings, load_settings, save_settings
 from ui.widget.panels.cpu_panel import CpuPanel
+from ui.widget.panels.disk_io_panel import DiskIoPanel
+from ui.widget.panels.disk_usage_panel import DiskUsagePanel
 from ui.widget.panels.mem_panel import MemPanel
 from ui.widget.panels.net_panel import NetPanel
 from ui.widget.settings_dialog import SettingsDialog
@@ -43,6 +45,8 @@ class MainWindow(QWidget):
         self.cpu_panel = CpuPanel()
         self.mem_panel = MemPanel()
         self.net_panel = NetPanel()
+        self.disk_usage_panel = DiskUsagePanel()
+        self.disk_io_panel = DiskIoPanel()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -50,6 +54,8 @@ class MainWindow(QWidget):
         layout.addWidget(self.cpu_panel)
         layout.addWidget(self.mem_panel)
         layout.addWidget(self.net_panel)
+        layout.addWidget(self.disk_usage_panel)
+        layout.addWidget(self.disk_io_panel)
 
         self.setLayout(layout)
         self._apply_panel_visibility()
@@ -72,8 +78,10 @@ class MainWindow(QWidget):
         self.cpu_panel.update_snapshot(snapshot.cpu)
         self.mem_panel.update_snapshot(snapshot.memory)
         self.net_panel.update_snapshot(snapshot.network)
-        # Число ядер известно только после первого тика, поэтому окно
-        # пересчитывает размер под ширину кольцевых индикаторов CPU здесь.
+        self.disk_usage_panel.update_snapshot(snapshot.disk)
+        self.disk_io_panel.update_snapshot(snapshot.disk)
+        # Число ядер/разделов известно только после первого тика, поэтому окно
+        # пересчитывает размер под их содержимое здесь.
         self.adjustSize()
 
     def _animate(self) -> None:
@@ -84,6 +92,8 @@ class MainWindow(QWidget):
         self.cpu_panel.setVisible(self._app_settings.show_cpu)
         self.mem_panel.setVisible(self._app_settings.show_mem)
         self.net_panel.setVisible(self._app_settings.show_net)
+        self.disk_usage_panel.setVisible(self._app_settings.show_disk)
+        self.disk_io_panel.setVisible(self._app_settings.show_disk)
 
     def _restore_position(self) -> None:
         saved = self._settings.value(SETTINGS_POSITION_KEY)

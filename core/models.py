@@ -34,7 +34,23 @@ class NetworkSnapshot:
 
 
 @dataclass
+class PartitionUsage:
+    mountpoint: str
+    percent: float
+    total_bytes: int
+    used_bytes: int
+
+
+@dataclass
+class DiskSnapshot:
+    partitions: list[PartitionUsage] = field(default_factory=list)
+    read_bytes_per_sec: float = 0.0
+    write_bytes_per_sec: float = 0.0
+
+
+@dataclass
 class SystemSnapshot:
     cpu: CpuSnapshot
     memory: MemorySnapshot
     network: NetworkSnapshot
+    disk: DiskSnapshot

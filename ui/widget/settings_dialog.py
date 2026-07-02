@@ -31,12 +31,15 @@ class SettingsDialog(QDialog):
         self.show_mem_check.setChecked(current.show_mem)
         self.show_net_check = QCheckBox("Показывать сеть")
         self.show_net_check.setChecked(current.show_net)
+        self.show_disk_check = QCheckBox("Показывать диски")
+        self.show_disk_check.setChecked(current.show_disk)
 
         form = QFormLayout()
         form.addRow("Интервал опроса:", self.interval_spin)
         form.addRow(self.show_cpu_check)
         form.addRow(self.show_mem_check)
         form.addRow(self.show_net_check)
+        form.addRow(self.show_disk_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -53,4 +56,5 @@ class SettingsDialog(QDialog):
             show_cpu=self.show_cpu_check.isChecked(),
             show_mem=self.show_mem_check.isChecked(),
             show_net=self.show_net_check.isChecked(),
+            show_disk=self.show_disk_check.isChecked(),
         )

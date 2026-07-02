@@ -15,6 +15,7 @@ class AppSettings:
     show_cpu: bool = True
     show_mem: bool = True
     show_net: bool = True
+    show_disk: bool = True
 
 
 def _to_bool(value: object) -> bool:
@@ -29,6 +30,7 @@ def load_settings(settings: QSettings) -> AppSettings:
         show_cpu=_to_bool(settings.value("settings/show_cpu", True)),
         show_mem=_to_bool(settings.value("settings/show_mem", True)),
         show_net=_to_bool(settings.value("settings/show_net", True)),
+        show_disk=_to_bool(settings.value("settings/show_disk", True)),
     )
 
 
@@ -37,3 +39,4 @@ def save_settings(settings: QSettings, app_settings: AppSettings) -> None:
     settings.setValue("settings/show_cpu", app_settings.show_cpu)
     settings.setValue("settings/show_mem", app_settings.show_mem)
     settings.setValue("settings/show_net", app_settings.show_net)
+    settings.setValue("settings/show_disk", app_settings.show_disk)

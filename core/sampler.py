@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Callable
 
 from core.collectors import cpu, memory
+from core.collectors.disk import DiskCollector
 from core.collectors.network import NetworkCollector
 from core.config import SamplerConfig
 from core.models import SystemSnapshot
@@ -17,6 +18,7 @@ class Sampler:
     def __init__(self, config: SamplerConfig | None = None) -> None:
         self.config = config or SamplerConfig()
         self._network_collector = NetworkCollector()
+        self._disk_collector = DiskCollector()
         self.history: deque[SystemSnapshot] = deque(maxlen=self.config.history_length)
         self._listeners: list[Callable[[SystemSnapshot], None]] = []
 
@@ -28,6 +30,7 @@ class Sampler:
             cpu=cpu.collect(),
             memory=memory.collect(),
             network=self._network_collector.collect(),
+            disk=self._disk_collector.collect(),
         )
         self.history.append(snapshot)
         for listener in self._listeners:
