@@ -1,0 +1,36 @@
+{
+    "head0": {
+        "type": "header",
+        "description": "Linux Visualizator"
+    },
+    "refresh-interval": {
+        "type": "spinbutton",
+        "default": 1000,
+        "min": 200,
+        "max": 5000,
+        "step": 100,
+        "unit": "ms",
+        "description": "Интервал опроса",
+        "tooltip": "Как часто опрашивать системные метрики."
+    },
+    "show-cpu": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать CPU"
+    },
+    "show-mem": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать RAM/Swap"
+    },
+    "show-net": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать сеть"
+    },
+    "show-disk": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать диски"
+    }
+}

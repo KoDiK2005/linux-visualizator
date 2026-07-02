@@ -1,0 +1,9 @@
+{
+    "uuid": "linux-visualizator@KoDiK2005",
+    "name": "Linux Visualizator",
+    "description": "Живая визуализация CPU, RAM/Swap, сети и дисков (I/O) в реальном времени.",
+    "version": "1.0",
+    "max-instances": "1",
+    "prevent-decorations": true,
+    "author": "KoDiK2005"
+}
