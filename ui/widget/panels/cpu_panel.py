@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QWidget
 
 from core.models import CpuSnapshot
 from ui.widget import theme
+from ui.widget.animation import SmoothedList
 
 RING_SIZE = 34
 RING_SPACING = 6
@@ -15,16 +16,21 @@ RING_THICKNESS = 4
 class CpuPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._per_core_percent: list[float] = []
+        self._smoothed = SmoothedList()
         self.setMinimumHeight(RING_SIZE + 8)
 
     def update_snapshot(self, cpu: CpuSnapshot) -> None:
-        self._per_core_percent = cpu.per_core_percent
+        self._smoothed.set_targets(cpu.per_core_percent)
         self.updateGeometry()
-        self.update()
+
+    def animate(self) -> bool:
+        changed = self._smoothed.step()
+        if changed:
+            self.update()
+        return changed
 
     def sizeHint(self) -> QSize:
-        count = max(len(self._per_core_percent), 1)
+        count = max(len(self._smoothed.values), 1)
         width = count * (RING_SIZE + RING_SPACING) + RING_SPACING
         return QSize(width, RING_SIZE + 8)
 
@@ -34,7 +40,7 @@ class CpuPanel(QWidget):
         painter.setFont(QFont(theme.FONT_FAMILY, 7))
 
         x = RING_SPACING
-        for percent in self._per_core_percent:
+        for percent in self._smoothed.values:
             rect = QRectF(x, 4, RING_SIZE, RING_SIZE)
 
             bg_pen = QPen(QColor(255, 255, 255, 40), RING_THICKNESS)

@@ -1,6 +1,6 @@
 """Прозрачное frameless-окно десклета, которое можно перетаскивать по рабочему столу."""
 
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import QPoint, QSettings, Qt, QTimer
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.models import SystemSnapshot
@@ -8,6 +8,9 @@ from ui.widget import theme
 from ui.widget.panels.cpu_panel import CpuPanel
 from ui.widget.panels.mem_panel import MemPanel
 from ui.widget.panels.net_panel import NetPanel
+
+ANIMATION_INTERVAL_MS = 33  # ~30 fps для плавных переходов значений
+SETTINGS_POSITION_KEY = "window/position"
 
 
 class MainWindow(QWidget):
@@ -26,6 +29,9 @@ class MainWindow(QWidget):
         )
 
         self._drag_offset: QPoint | None = None
+        self._settings = QSettings(
+            QSettings.IniFormat, QSettings.UserScope, "linux-visualizator", "desklet"
+        )
 
         self.cpu_panel = CpuPanel()
         self.mem_panel = MemPanel()
@@ -40,6 +46,12 @@ class MainWindow(QWidget):
 
         self.setLayout(layout)
         self.adjustSize()
+        self._restore_position()
+
+        self._animation_timer = QTimer(self)
+        self._animation_timer.setInterval(ANIMATION_INTERVAL_MS)
+        self._animation_timer.timeout.connect(self._animate)
+        self._animation_timer.start()
 
     def update_snapshot(self, snapshot: SystemSnapshot) -> None:
         self.cpu_panel.update_snapshot(snapshot.cpu)
@@ -48,6 +60,18 @@ class MainWindow(QWidget):
         # Число ядер известно только после первого тика, поэтому окно
         # пересчитывает размер под ширину кольцевых индикаторов CPU здесь.
         self.adjustSize()
+
+    def _animate(self) -> None:
+        self.cpu_panel.animate()
+        self.mem_panel.animate()
+
+    def _restore_position(self) -> None:
+        saved = self._settings.value(SETTINGS_POSITION_KEY)
+        if saved is not None:
+            self.move(saved)
+
+    def _save_position(self) -> None:
+        self._settings.setValue(SETTINGS_POSITION_KEY, self.pos())
 
     # Перетаскивание окна мышью, т.к. у frameless-окна нет заголовка.
     def mousePressEvent(self, event):
@@ -59,4 +83,10 @@ class MainWindow(QWidget):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
 
     def mouseReleaseEvent(self, event):
-        self._drag_offset = None
+        if self._drag_offset is not None:
+            self._drag_offset = None
+            self._save_position()
+
+    def closeEvent(self, event):
+        self._save_position()
+        super().closeEvent(event)

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QWidget
 
 from core.models import MemorySnapshot
 from ui.widget import theme
+from ui.widget.animation import SmoothedValue
 
 BAR_HEIGHT = 12
 BAR_SPACING = 4
@@ -14,23 +15,28 @@ BAR_SPACING = 4
 class MemPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._mem_percent = 0.0
-        self._swap_percent = 0.0
+        self._mem_percent = SmoothedValue()
+        self._swap_percent = SmoothedValue()
         self.setMinimumHeight(BAR_HEIGHT * 2 + BAR_SPACING + 4)
 
     def update_snapshot(self, memory: MemorySnapshot) -> None:
-        self._mem_percent = memory.percent
-        self._swap_percent = memory.swap_percent
-        self.update()
+        self._mem_percent.set_target(memory.percent)
+        self._swap_percent.set_target(memory.swap_percent)
+
+    def animate(self) -> bool:
+        changed = self._mem_percent.step() | self._swap_percent.step()
+        if changed:
+            self.update()
+        return changed
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         width = self.width()
 
-        self._draw_bar(painter, 0, width, self._mem_percent, "RAM", dim=False)
+        self._draw_bar(painter, 0, width, self._mem_percent.value, "RAM", dim=False)
         self._draw_bar(
-            painter, BAR_HEIGHT + BAR_SPACING, width, self._swap_percent, "SWAP", dim=True
+            painter, BAR_HEIGHT + BAR_SPACING, width, self._swap_percent.value, "SWAP", dim=True
         )
 
     def _draw_bar(

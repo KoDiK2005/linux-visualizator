@@ -14,6 +14,9 @@ dev = [
     "ruff>=0.5",
 ]
 
+[project.scripts]
+linux-visualizator = "ui.app:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
