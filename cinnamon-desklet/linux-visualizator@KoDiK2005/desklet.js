@@ -7,6 +7,14 @@ const Cairo = imports.cairo;
 const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
 const ByteArray = imports.byteArray;
+const Gettext = imports.gettext;
+
+const UUID = 'linux-visualizator@KoDiK2005';
+Gettext.bindtextdomain(UUID, GLib.get_home_dir() + '/.local/share/locale');
+
+function _(str) {
+    return Gettext.dgettext(UUID, str);
+}
 
 // ---- тема (соответствует ui/widget/theme.py в Python-версии) ----
 const COLOR_BG_TOP = [26 / 255, 27 / 255, 34 / 255];
@@ -47,13 +55,67 @@ const SYMBOL_FONT = 'DejaVu Sans';
 const ANIMATION_INTERVAL_MS = 33; // ~30 fps, только на несколько кадров после каждого тика
 const SMOOTHING_FACTOR = 0.25;
 
-function readFile(path) {
-    try {
-        let [ok, contents] = GLib.file_get_contents(path);
-        return ok ? ByteArray.toString(contents) : null;
-    } catch (e) {
-        return null;
-    }
+// Асинхронное чтение файла вместо GLib.file_get_contents — блокирующий ввод-вывод на каждом
+// тике нежелателен для главного цикла Cinnamon (shell-приложения не должны блокировать UI-поток).
+function readFileAsync(path, cancellable = null) {
+    return new Promise((resolve) => {
+        let file = Gio.File.new_for_path(path);
+        file.load_contents_async(cancellable, (source, result) => {
+            try {
+                let [success, contents] = source.load_contents_finish(result);
+                resolve(success ? ByteArray.toString(contents) : null);
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    });
+}
+
+// Асинхронный запуск внешней команды (argv-массив, без /bin/sh -c с конкатенацией пользовательских
+// строк — так исключается риск command injection).
+function runProcessAsync(argv, cancellable = null) {
+    return new Promise((resolve) => {
+        try {
+            let proc = new Gio.Subprocess({
+                argv, flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+            });
+            proc.init(cancellable);
+            proc.communicate_utf8_async(null, cancellable, (source, result) => {
+                try {
+                    let [, stdout] = source.communicate_utf8_finish(result);
+                    resolve(stdout || '');
+                } catch (e) {
+                    resolve(null);
+                }
+            });
+        } catch (e) {
+            resolve(null);
+        }
+    });
+}
+
+// Асинхронный листинг директории (замена Gio.File.enumerate_children).
+function listDirAsync(path, cancellable = null) {
+    return new Promise((resolve) => {
+        let dir = Gio.File.new_for_path(path);
+        dir.enumerate_children_async(
+            'standard::name', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable,
+            (source, result) => {
+                try {
+                    let enumerator = source.enumerate_children_finish(result);
+                    enumerator.next_files_async(64, GLib.PRIORITY_DEFAULT, cancellable, (source2, result2) => {
+                        try {
+                            let infos = source2.next_files_finish(result2);
+                            resolve(infos.map((info) => info.get_name()));
+                        } catch (e) {
+                            resolve([]);
+                        }
+                    });
+                } catch (e) {
+                    resolve([]);
+                }
+            });
+    });
 }
 
 function lerp(a, b, t) {
@@ -147,8 +209,8 @@ SmootherMap.prototype.step = function () {
 
 // ---- сборщики метрик (аналог core/collectors/*.py, но через /proc напрямую) ----
 
-function collectCpu(prevState) {
-    let text = readFile('/proc/stat');
+async function collectCpu(prevState) {
+    let text = await readFileAsync('/proc/stat');
     if (!text) return { perCore: [], state: prevState };
 
     let newState = {};
@@ -176,8 +238,8 @@ function collectCpu(prevState) {
 
 // Средняя частота ядер в МГц из /proc/cpuinfo (Linux ядро публикует её без доп. привилегий,
 // в отличие от cpufreq sysfs-файлов, которые не везде читаемы без root).
-function collectCpuFrequencyMHz() {
-    let text = readFile('/proc/cpuinfo');
+async function collectCpuFrequencyMHz() {
+    let text = await readFileAsync('/proc/cpuinfo');
     if (!text) return null;
     let matches = [...text.matchAll(/cpu MHz\s*:\s*([\d.]+)/g)];
     if (!matches.length) return null;
@@ -187,34 +249,28 @@ function collectCpuFrequencyMHz() {
 
 // Ищет файл hwmon с температурой пакета CPU (Intel: "Package id 0", AMD: "Tctl"/"Tdie").
 // Делается один раз при старте десклета и кэшируется — сам путь не меняется на лету.
-function findCpuTempFile() {
+async function findCpuTempFile() {
     let labels = ['Package id 0', 'Tctl', 'Tdie'];
     for (let label of labels) {
-        try {
-            let argv = ['/bin/sh', '-c',
-                "grep -s -l -d skip '" + label + "' /sys/class/hwmon/*/temp*_label 2>/dev/null | sed 's/_label/_input/' | head -n 1"];
-            let proc = new Gio.Subprocess({ argv, flags: Gio.SubprocessFlags.STDOUT_PIPE });
-            proc.init(null);
-            let [, stdout] = proc.communicate_utf8(null, null);
-            let path = stdout.trim();
-            if (path) return path;
-        } catch (e) {
-            // пробуем следующую метку
-        }
+        let argv = ['/bin/sh', '-c',
+            "grep -s -l -d skip '" + label + "' /sys/class/hwmon/*/temp*_label 2>/dev/null | sed 's/_label/_input/' | head -n 1"];
+        let stdout = await runProcessAsync(argv);
+        let path = (stdout || '').trim();
+        if (path) return path;
     }
     return null;
 }
 
-function collectCpuTemperatureC(tempFilePath) {
+async function collectCpuTemperatureC(tempFilePath) {
     if (!tempFilePath) return null;
-    let text = readFile(tempFilePath);
+    let text = await readFileAsync(tempFilePath);
     if (!text) return null;
     let millidegrees = parseInt(text.trim());
     return isNaN(millidegrees) ? null : millidegrees / 1000;
 }
 
-function collectMemory() {
-    let text = readFile('/proc/meminfo');
+async function collectMemory() {
+    let text = await readFileAsync('/proc/meminfo');
     if (!text) return { percent: 0, swapPercent: 0, totalBytes: 0, usedBytes: 0, swapTotalBytes: 0 };
 
     let readField = (name) => {
@@ -239,8 +295,8 @@ function bytesToGB(bytes) {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1);
 }
 
-function collectNetwork(prevState, elapsedSec, interfaceFilter) {
-    let text = readFile('/proc/net/dev');
+async function collectNetwork(prevState, elapsedSec, interfaceFilter) {
+    let text = await readFileAsync('/proc/net/dev');
     if (!text) return { recvRate: 0, sentRate: 0, state: prevState };
 
     let filterList = (interfaceFilter || '').split(',').map((s) => s.trim()).filter((s) => s);
@@ -266,7 +322,7 @@ function collectNetwork(prevState, elapsedSec, interfaceFilter) {
     return { recvRate, sentRate, state: { rx: totalRx, tx: totalTx } };
 }
 
-function collectDiskUsage(diskFilter) {
+async function collectDiskUsage(diskFilter) {
     let filterList = (diskFilter || '').split(',').map((s) => s.trim()).filter((s) => s);
     let argv = [
         '/bin/df', '-B1', '--output=target,size,pcent',
@@ -276,29 +332,24 @@ function collectDiskUsage(diskFilter) {
         '-x', 'pstore', '-x', 'mqueue', '-x', 'hugetlbfs', '-x', 'rpc_pipefs',
         '-x', 'fusectl', '-x', 'binfmt_misc',
     ];
-    try {
-        let proc = new Gio.Subprocess({ argv, flags: Gio.SubprocessFlags.STDOUT_PIPE });
-        proc.init(null);
-        let [, stdout] = proc.communicate_utf8(null, null);
+    let stdout = await runProcessAsync(argv);
+    if (!stdout) return [];
 
-        let partitions = [];
-        for (let line of stdout.split('\n').slice(1)) {
-            let parts = line.trim().split(/\s+/);
-            if (parts.length < 3) continue;
-            let size = parseInt(parts[1]);
-            let percent = parseFloat(parts[2].replace('%', ''));
-            if (isNaN(size) || size < MIN_PARTITION_BYTES || isNaN(percent)) continue;
-            if (filterList.length && !filterList.some((f) => parts[0].indexOf(f) !== -1)) continue;
-            partitions.push({ mountpoint: parts[0], percent });
-        }
-        return partitions;
-    } catch (e) {
-        return [];
+    let partitions = [];
+    for (let line of stdout.split('\n').slice(1)) {
+        let parts = line.trim().split(/\s+/);
+        if (parts.length < 3) continue;
+        let size = parseInt(parts[1]);
+        let percent = parseFloat(parts[2].replace('%', ''));
+        if (isNaN(size) || size < MIN_PARTITION_BYTES || isNaN(percent)) continue;
+        if (filterList.length && !filterList.some((f) => parts[0].indexOf(f) !== -1)) continue;
+        partitions.push({ mountpoint: parts[0], percent });
     }
+    return partitions;
 }
 
-function collectDiskIo(prevState, elapsedSec) {
-    let text = readFile('/proc/diskstats');
+async function collectDiskIo(prevState, elapsedSec) {
+    let text = await readFileAsync('/proc/diskstats');
     if (!text) return { readRate: 0, writeRate: 0, state: prevState };
 
     let totalReadSectors = 0;
@@ -323,66 +374,56 @@ function collectDiskIo(prevState, elapsedSec) {
 // Поддерживает NVIDIA (nvidia-smi) и AMD (amdgpu sysfs). Если ни один распознанный GPU не
 // найден (например, чистый Intel iGPU без единого стандартного интерфейса загрузки),
 // возвращает null — секция GPU скрывается вместо показа нулей (аналог core/collectors/gpu.py).
-function collectGpuNvidia() {
-    try {
-        let argv = ['nvidia-smi', '--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu', '--format=csv,noheader,nounits'];
-        let proc = new Gio.Subprocess({ argv, flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE });
-        proc.init(null);
-        let [, stdout] = proc.communicate_utf8(null, null);
-        let line = (stdout || '').trim().split('\n')[0];
-        if (!line) return null;
-        let parts = line.split(',').map((p) => p.trim());
-        if (parts.length < 5) return null;
-        let percent = parseFloat(parts[1]);
-        if (isNaN(percent)) return null;
-        let memUsedBytes = parseFloat(parts[2]) * 1024 * 1024;
-        let memTotalBytes = parseFloat(parts[3]) * 1024 * 1024;
-        let temp = parseFloat(parts[4]);
-        return { name: parts[0], percent, memUsedBytes, memTotalBytes, temperatureC: isNaN(temp) ? null : temp };
-    } catch (e) {
-        return null;
-    }
+async function collectGpuNvidia() {
+    let stdout = await runProcessAsync([
+        'nvidia-smi', '--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu',
+        '--format=csv,noheader,nounits',
+    ]);
+    if (!stdout) return null;
+    let line = stdout.trim().split('\n')[0];
+    if (!line) return null;
+    let parts = line.split(',').map((p) => p.trim());
+    if (parts.length < 5) return null;
+    let percent = parseFloat(parts[1]);
+    if (isNaN(percent)) return null;
+    let memUsedBytes = parseFloat(parts[2]) * 1024 * 1024;
+    let memTotalBytes = parseFloat(parts[3]) * 1024 * 1024;
+    let temp = parseFloat(parts[4]);
+    return { name: parts[0], percent, memUsedBytes, memTotalBytes, temperatureC: isNaN(temp) ? null : temp };
 }
 
-function collectGpuAmd() {
-    let enumerator;
-    try {
-        enumerator = Gio.File.new_for_path('/sys/class/drm').enumerate_children(
-            'standard::name', Gio.FileQueryInfoFlags.NONE, null);
-    } catch (e) {
-        return null;
-    }
-    let info;
-    while ((info = enumerator.next_file(null)) !== null) {
-        let name = info.get_name();
+async function collectGpuAmd() {
+    let cardNames = await listDirAsync('/sys/class/drm');
+    for (let name of cardNames) {
         if (!/^card\d+$/.test(name)) continue;
         let devicePath = '/sys/class/drm/' + name + '/device';
-        let busyText = readFile(devicePath + '/gpu_busy_percent');
+        let busyText = await readFileAsync(devicePath + '/gpu_busy_percent');
         if (busyText === null) continue;
         let percent = parseInt(busyText.trim());
         if (isNaN(percent)) continue;
 
-        let memUsedBytes = parseInt(readFile(devicePath + '/mem_info_vram_used') || '') || 0;
-        let memTotalBytes = parseInt(readFile(devicePath + '/mem_info_vram_total') || '') || 0;
+        let [memUsedText, memTotalText] = await Promise.all([
+            readFileAsync(devicePath + '/mem_info_vram_used'),
+            readFileAsync(devicePath + '/mem_info_vram_total'),
+        ]);
+        let memUsedBytes = parseInt(memUsedText || '') || 0;
+        let memTotalBytes = parseInt(memTotalText || '') || 0;
+
         let temperatureC = null;
-        try {
-            let hwmonEnum = Gio.File.new_for_path(devicePath + '/hwmon').enumerate_children(
-                'standard::name', Gio.FileQueryInfoFlags.NONE, null);
-            let hwmonInfo = hwmonEnum.next_file(null);
-            if (hwmonInfo) {
-                let tempText = readFile(devicePath + '/hwmon/' + hwmonInfo.get_name() + '/temp1_input');
-                if (tempText) temperatureC = parseInt(tempText.trim()) / 1000;
-            }
-        } catch (e) {
-            // нет hwmon — температура недоступна для этой карты
+        let hwmonNames = await listDirAsync(devicePath + '/hwmon');
+        if (hwmonNames.length) {
+            let tempText = await readFileAsync(devicePath + '/hwmon/' + hwmonNames[0] + '/temp1_input');
+            if (tempText) temperatureC = parseInt(tempText.trim()) / 1000;
         }
         return { name: 'AMD GPU', percent, memUsedBytes, memTotalBytes, temperatureC };
     }
     return null;
 }
 
-function collectGpu() {
-    return collectGpuNvidia() || collectGpuAmd();
+async function collectGpu() {
+    let nvidia = await collectGpuNvidia();
+    if (nvidia) return nvidia;
+    return await collectGpuAmd();
 }
 
 // ---- десклет ----
@@ -426,7 +467,11 @@ LinuxVisualizatorDesklet.prototype = {
         this._netState = null;
         this._diskIoState = null;
         this._lastTickTime = null;
-        this._cpuTempFile = findCpuTempFile();
+        // Определение файла температуры требует запуска grep — делается асинхронно и не
+        // блокирует инициализацию десклета; до первого разрешения промиса температура не
+        // показывается (первые один-два тика), что не критично для UX.
+        this._cpuTempFile = null;
+        findCpuTempFile().then((path) => { this._cpuTempFile = path; });
 
         this._cpuPercents = [];
         this._cpuAverage = 0;
@@ -466,7 +511,7 @@ LinuxVisualizatorDesklet.prototype = {
         try {
             GLib.spawn_command_line_async(command);
         } catch (e) {
-            global.logError('linux-visualizator: не удалось запустить "' + command + '": ' + e);
+            global.logError('linux-visualizator: failed to launch "' + command + '": ' + e);
         }
     },
 
@@ -477,12 +522,21 @@ LinuxVisualizatorDesklet.prototype = {
         this._tick();
     },
 
+    // Тонкая синхронная обёртка вокруг _tickAsync: используется как callback Mainloop.timeout_add
+    // и как обработчик кликов/событий настроек. Если бы _tickAsync (async function, возвращающая
+    // Promise) была передана в timeout_add напрямую, GJS marshalling воспринял бы truthy-Promise
+    // как GLib.SOURCE_CONTINUE, и GLib продолжал бы вызывать её сам — вдобавок к ручному
+    // перепланированию в конце _tickAsync, что привело бы к дублирующимся/накапливающимся таймерам.
     _tick: function () {
+        this._tickAsync();
+    },
+
+    _tickAsync: async function () {
         let now = GLib.get_monotonic_time() / 1e6;
         let elapsed = this._lastTickTime ? now - this._lastTickTime : 0;
 
         if (this.showCpu) {
-            let cpu = collectCpu(this._cpuState);
+            let cpu = await collectCpu(this._cpuState);
             this._cpuPercents = cpu.perCore;
             this._cpuState = cpu.state;
             this._cpuPercents.forEach((percent, idx) => this._cpuSmoother.setTarget(idx, percent));
@@ -493,11 +547,11 @@ LinuxVisualizatorDesklet.prototype = {
                 : 0;
             this._pushHistory(this._cpuHistory, this._cpuAverage);
 
-            this._cpuFreqMHz = this.showCpuFreq ? collectCpuFrequencyMHz() : null;
-            this._cpuTempC = this.showCpuTemp ? collectCpuTemperatureC(this._cpuTempFile) : null;
+            this._cpuFreqMHz = this.showCpuFreq ? await collectCpuFrequencyMHz() : null;
+            this._cpuTempC = this.showCpuTemp ? await collectCpuTemperatureC(this._cpuTempFile) : null;
         }
         if (this.showMem) {
-            let mem = collectMemory();
+            let mem = await collectMemory();
             this._memPercent = mem.percent;
             this._swapPercent = mem.swapPercent;
             this._memTotalBytes = mem.totalBytes;
@@ -507,22 +561,22 @@ LinuxVisualizatorDesklet.prototype = {
             this._swapSmoother.setTarget(mem.swapPercent);
         }
         if (this.showNet) {
-            let net = collectNetwork(this._netState, elapsed, this.networkInterface);
+            let net = await collectNetwork(this._netState, elapsed, this.networkInterface);
             this._netState = net.state;
             this._pushHistory(this._netHistory.recv, net.recvRate);
             this._pushHistory(this._netHistory.sent, net.sentRate);
         }
         if (this.showDisk) {
-            this._diskPartitions = collectDiskUsage(this.diskFilter);
+            this._diskPartitions = await collectDiskUsage(this.diskFilter);
             this._diskPartitions.forEach((p) => this._diskSmoother.setTarget(p.mountpoint, p.percent));
             this._diskSmoother.pruneExcept(this._diskPartitions.map((p) => p.mountpoint));
-            let io = collectDiskIo(this._diskIoState, elapsed);
+            let io = await collectDiskIo(this._diskIoState, elapsed);
             this._diskIoState = io.state;
             this._pushHistory(this._diskIoHistory.read, io.readRate);
             this._pushHistory(this._diskIoHistory.write, io.writeRate);
         }
         if (this.showGpu) {
-            this._gpu = collectGpu();
+            this._gpu = await collectGpu();
             if (this._gpu) this._gpuSmoother.setTarget(this._gpu.percent);
         } else {
             this._gpu = null;
@@ -596,27 +650,27 @@ LinuxVisualizatorDesklet.prototype = {
             if (this.showCpuTemp && this._cpuTempC !== null) statParts.push(Math.round(this._cpuTempC) + '°C');
 
             unordered.cpu = {
-                type: 'cpu', height: h, label: 'ПРОЦЕССОР', color: this._colorCpu,
+                type: 'cpu', height: h, label: _('CPU'), color: this._colorCpu,
                 view, statText: statParts.join('  '),
             };
         }
         if (this.showMem) {
             let h = HEADER_HEIGHT * s + BAR_HEIGHT * s + (this._hasSwap ? (BAR_HEIGHT + BAR_SPACING) * s : 0);
-            unordered.mem = { type: 'mem', height: h, label: 'ПАМЯТЬ', color: this._colorMem };
+            unordered.mem = { type: 'mem', height: h, label: _('MEMORY'), color: this._colorMem };
         }
         if (this.showNet) {
             let h = HEADER_HEIGHT * s + SPARK_HEIGHT * s;
-            unordered.net = { type: 'net', height: h, label: 'СЕТЬ', color: this._colorNetDown };
+            unordered.net = { type: 'net', height: h, label: _('NETWORK'), color: this._colorNetDown };
         }
         if (this.showDisk) {
             let count = Math.max(this._diskPartitions.length, 1);
             let usageHeight = count * BAR_HEIGHT * s + (count - 1) * BAR_SPACING * s;
             let h = HEADER_HEIGHT * s + usageHeight + BAR_SPACING * s + SPARK_HEIGHT * s;
-            unordered.disk = { type: 'disk', height: h, label: 'ДИСКИ', color: this._colorDisk, usageHeight };
+            unordered.disk = { type: 'disk', height: h, label: _('DISKS'), color: this._colorDisk, usageHeight };
         }
         if (this.showGpu && this._gpu) {
             let h = HEADER_HEIGHT * s + BAR_HEIGHT * s;
-            unordered.gpu = { type: 'gpu', height: h, label: 'GPU', color: this._colorGpu };
+            unordered.gpu = { type: 'gpu', height: h, label: _('GPU'), color: this._colorGpu };
         }
 
         let order = (this.panelOrder || '').split(',').map((k) => k.trim()).filter((k) => k);
@@ -790,7 +844,7 @@ LinuxVisualizatorDesklet.prototype = {
         for (let idx = 0; idx < coreCount; idx++) {
             let percent = this._cpuSmoother.value(idx);
             let y = idx * (barHeight + barSpacing);
-            let label = 'Core ' + idx + '  ' + Math.round(percent) + '%';
+            let label = _('Core %d  %d%%').format(idx, Math.round(percent));
             this._drawBar(ctx, y, width, percent, label, severityColor(this._colorCpu, percent, this.warnThreshold, this.badThreshold), 1.0);
         }
     },
@@ -805,28 +859,29 @@ LinuxVisualizatorDesklet.prototype = {
         ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
         ctx.setFontSize(9 * s);
         ctx.moveTo(0, plotTop - 4);
-        ctx.showText('Средняя загрузка: ' + Math.round(this._cpuAverage) + '%');
+        ctx.showText(_('Average load: %d%%').format(Math.round(this._cpuAverage)));
     },
 
     _drawMemBars: function (ctx, width) {
         let s = this._scale || 1;
         let barHeight = BAR_HEIGHT * s;
         let barSpacing = BAR_SPACING * s;
-        let ramLabel = 'RAM ' + Math.round(this._memSmoother.value) + '%';
+        let ramLabel = _('RAM %d%%').format(Math.round(this._memSmoother.value));
         if (this._memTotalBytes) {
             ramLabel += '  (' + bytesToGB(this._memUsedBytes) + '/' + bytesToGB(this._memTotalBytes) + ' GB)';
         }
         this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(this._colorMem, this._memSmoother.value, this.warnThreshold, this.badThreshold), 1.0);
 
         if (this._hasSwap) {
-            this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', this._colorMem, 0.5);
+            let swapLabel = _('SWAP %d%%').format(Math.round(this._swapSmoother.value));
+            this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, swapLabel, this._colorMem, 0.5);
         }
     },
 
     _drawGpuBar: function (ctx, width) {
         if (!this._gpu) return;
         let percent = this._gpuSmoother.value;
-        let label = 'GPU ' + Math.round(percent) + '%';
+        let label = _('GPU %d%%').format(Math.round(percent));
         if (this._gpu.memTotalBytes) {
             label += '  (' + bytesToGB(this._gpu.memUsedBytes) + '/' + bytesToGB(this._gpu.memTotalBytes) + ' GB)';
         }

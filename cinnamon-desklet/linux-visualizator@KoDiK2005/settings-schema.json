@@ -10,8 +10,8 @@
         "max": 5000,
         "step": 100,
         "unit": "ms",
-        "description": "Интервал опроса",
-        "tooltip": "Как часто опрашивать системные метрики."
+        "description": "Refresh interval",
+        "tooltip": "How often to poll system metrics."
     },
     "background-opacity": {
         "type": "spinbutton",
@@ -19,14 +19,14 @@
         "min": 40,
         "max": 255,
         "step": 5,
-        "description": "Непрозрачность фона",
-        "tooltip": "0 — почти прозрачный, 255 — полностью непрозрачный."
+        "description": "Background opacity",
+        "tooltip": "0 is nearly transparent, 255 is fully opaque."
     },
     "click-command": {
         "type": "entry",
         "default": "gnome-system-monitor",
-        "description": "Команда по клику",
-        "tooltip": "Запускается по левому клику на десклете. Пусто — отключить."
+        "description": "Click command",
+        "tooltip": "Launched on left-click on the desklet. Leave empty to disable."
     },
     "ui-scale": {
         "type": "spinbutton",
@@ -35,14 +35,14 @@
         "max": 150,
         "step": 5,
         "unit": "%",
-        "description": "Масштаб интерфейса",
-        "tooltip": "Размер колец/полос/шрифтов относительно стандартного."
+        "description": "Interface scale",
+        "tooltip": "Size of rings/bars/fonts relative to the default."
     },
     "panel-order": {
         "type": "entry",
         "default": "cpu,mem,net,disk",
-        "description": "Порядок секций",
-        "tooltip": "Через запятую: cpu,mem,net,disk. Пропущенные секции добавляются в конец."
+        "description": "Section order",
+        "tooltip": "Comma-separated: cpu,mem,net,disk. Omitted sections are appended at the end."
     },
     "warn-threshold": {
         "type": "spinbutton",
@@ -51,8 +51,8 @@
         "max": 99,
         "step": 1,
         "unit": "%",
-        "description": "Жёлтый порог",
-        "tooltip": "Выше этого процента индикатор окрашивается в жёлтый."
+        "description": "Warning threshold",
+        "tooltip": "Above this percentage, indicators turn yellow."
     },
     "bad-threshold": {
         "type": "spinbutton",
@@ -61,138 +61,138 @@
         "max": 100,
         "step": 1,
         "unit": "%",
-        "description": "Красный порог",
-        "tooltip": "Выше этого процента индикатор окрашивается в красный."
+        "description": "Critical threshold",
+        "tooltip": "Above this percentage, indicators turn red."
     },
 
     "head-theme": {
         "type": "header",
-        "description": "Цветовая тема"
+        "description": "Color theme"
     },
     "accent-cpu": {
         "type": "colorchooser",
         "default": "rgb(79,195,247)",
-        "description": "Цвет CPU"
+        "description": "CPU color"
     },
     "accent-mem": {
         "type": "colorchooser",
         "default": "rgb(129,199,132)",
-        "description": "Цвет RAM"
+        "description": "RAM color"
     },
     "accent-net": {
         "type": "colorchooser",
         "default": "rgb(255,183,77)",
-        "description": "Цвет сети",
-        "tooltip": "Линия «отправлено» рисуется осветлённым оттенком этого цвета."
+        "description": "Network color",
+        "tooltip": "The \"sent\" line is drawn in a lighter shade of this color."
     },
     "accent-disk": {
         "type": "colorchooser",
         "default": "rgb(186,104,200)",
-        "description": "Цвет дисков",
-        "tooltip": "Линия «запись» рисуется осветлённым оттенком этого цвета."
+        "description": "Disk color",
+        "tooltip": "The \"write\" line is drawn in a lighter shade of this color."
     },
     "accent-gpu": {
         "type": "colorchooser",
         "default": "rgb(77,208,225)",
-        "description": "Цвет GPU"
+        "description": "GPU color"
     },
 
     "head-cpu": {
         "type": "header",
-        "description": "Процессор"
+        "description": "Processor"
     },
     "show-cpu": {
         "type": "switch",
         "default": true,
-        "description": "Показывать CPU"
+        "description": "Show CPU"
     },
     "cpu-view": {
         "type": "combobox",
         "default": "rings",
         "options": {
-            "Кольца по ядрам": "rings",
-            "Полосы по ядрам": "bars",
-            "График общей загрузки": "graph"
+            "Rings per core": "rings",
+            "Bars per core": "bars",
+            "Overall load graph": "graph"
         },
-        "description": "Вид отображения CPU",
-        "tooltip": "Как показывать загрузку процессора.",
+        "description": "CPU display mode",
+        "tooltip": "How to display processor load.",
         "dependency": "show-cpu"
     },
     "show-cpu-freq": {
         "type": "switch",
         "default": true,
-        "description": "Показывать частоту CPU",
+        "description": "Show CPU frequency",
         "dependency": "show-cpu"
     },
     "show-cpu-temp": {
         "type": "switch",
         "default": true,
-        "description": "Показывать температуру CPU (если доступна)",
+        "description": "Show CPU temperature (if available)",
         "dependency": "show-cpu"
     },
 
     "head-mem": {
         "type": "header",
-        "description": "Память"
+        "description": "Memory"
     },
     "show-mem": {
         "type": "switch",
         "default": true,
-        "description": "Показывать RAM/Swap"
+        "description": "Show RAM/Swap"
     },
 
     "head-net": {
         "type": "header",
-        "description": "Сеть"
+        "description": "Network"
     },
     "show-net": {
         "type": "switch",
         "default": true,
-        "description": "Показывать сеть"
+        "description": "Show network"
     },
     "network-interface": {
         "type": "entry",
         "default": "",
-        "description": "Сетевые интерфейсы",
-        "tooltip": "Например, wlan0 или enp3s0,wlan0 через запятую. Пусто — суммировать все интерфейсы, кроме lo.",
+        "description": "Network interfaces",
+        "tooltip": "For example, wlan0 or enp3s0,wlan0 (comma-separated). Leave empty to sum all interfaces except lo.",
         "dependency": "show-net"
     },
     "net-unit": {
         "type": "combobox",
         "default": "bytes",
         "options": {
-            "Байты (KB/s)": "bytes",
-            "Биты (Kb/s)": "bits"
+            "Bytes (KB/s)": "bytes",
+            "Bits (Kb/s)": "bits"
         },
-        "description": "Единицы измерения сети",
+        "description": "Network units",
         "dependency": "show-net"
     },
 
     "head-disk": {
         "type": "header",
-        "description": "Диски"
+        "description": "Disks"
     },
     "show-disk": {
         "type": "switch",
         "default": true,
-        "description": "Показывать диски"
+        "description": "Show disks"
     },
     "disk-filter": {
         "type": "entry",
         "default": "",
-        "description": "Разделы дисков",
-        "tooltip": "Подстроки точек монтирования через запятую, например: /, /home. Пусто — показывать все.",
+        "description": "Disk partitions",
+        "tooltip": "Comma-separated mount point substrings, e.g.: /, /home. Leave empty to show all.",
         "dependency": "show-disk"
     },
 
     "head-gpu": {
         "type": "header",
-        "description": "Видеокарта"
+        "description": "Graphics card"
     },
     "show-gpu": {
         "type": "switch",
         "default": true,
-        "description": "Показывать GPU (если обнаружен)",
-        "tooltip": "Поддерживаются NVIDIA (nvidia-smi) и AMD (amdgpu). Если GPU не распознан, секция скрывается автоматически."
+        "description": "Show GPU (if detected)",
+        "tooltip": "Supports NVIDIA (nvidia-smi) and AMD (amdgpu). If no GPU is recognized, the section is hidden automatically."
     }
 }
