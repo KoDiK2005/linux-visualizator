@@ -24,11 +24,16 @@ class DiskUsagePanel(QWidget):
         self._partitions: list[PartitionUsage] = []
         self._filter: list[str] = []
         self._scale = 1.0
+        self._accent_color = theme.ACCENT_DISK
         self.setMinimumHeight(BAR_HEIGHT + 4)
 
     def set_scale(self, scale: float) -> None:
         self._scale = scale
         self.updateGeometry()
+        self.update()
+
+    def set_color(self, accent_color: str) -> None:
+        self._accent_color = accent_color
         self.update()
 
     def set_filter(self, filter_text: str) -> None:
@@ -74,7 +79,7 @@ class DiskUsagePanel(QWidget):
         painter.setBrush(QColor(255, 255, 255, 30))
         painter.drawRoundedRect(bg_rect, 4, 4)
 
-        fill_color = severity_color(theme.ACCENT_DISK, percent)
+        fill_color = severity_color(self._accent_color, percent)
         fill_width = width * min(percent, 100.0) / 100.0
         fill_rect = QRectF(0, y, fill_width, bar_height)
         painter.setBrush(fill_color)

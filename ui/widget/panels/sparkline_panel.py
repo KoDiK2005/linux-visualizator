@@ -40,6 +40,11 @@ class SparklinePanel(QWidget):
         self._unit_mode = unit_mode
         self.update()
 
+    def set_colors(self, color_a: str, color_b: str) -> None:
+        self._color_a = color_a
+        self._color_b = color_b
+        self.update()
+
     def set_scale(self, scale: float) -> None:
         self._scale = scale
         self.setMinimumHeight(round(PANEL_HEIGHT * scale))

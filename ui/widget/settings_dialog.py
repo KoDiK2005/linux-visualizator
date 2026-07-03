@@ -1,20 +1,24 @@
-"""Диалог настроек десклета: интервал опроса, видимость панелей и внешний вид."""
+"""Диалог настроек десклета: интервал опроса, видимость панелей, внешний вид и тема."""
 
 from dataclasses import replace
 
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QLineEdit,
+    QPushButton,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from ui.widget import theme
 from ui.widget.app_settings import (
     MAX_INTERVAL_MS,
     MAX_SCALE_PERCENT,
@@ -22,6 +26,35 @@ from ui.widget.app_settings import (
     MIN_SCALE_PERCENT,
     AppSettings,
 )
+
+
+class ColorButton(QPushButton):
+    """Кнопка-образец цвета: клик открывает QColorDialog, хранит выбранный hex."""
+
+    def __init__(self, color_hex: str, parent=None) -> None:
+        super().__init__(parent)
+        self._color_hex = color_hex
+        self.setFixedWidth(70)
+        self._update_style()
+        self.clicked.connect(self._pick_color)
+
+    def color_hex(self) -> str:
+        return self._color_hex
+
+    def set_color(self, color_hex: str) -> None:
+        self._color_hex = color_hex
+        self._update_style()
+
+    def _update_style(self) -> None:
+        self.setText(self._color_hex)
+        self.setStyleSheet(
+            f"background-color: {self._color_hex}; color: #1a1a1a; border-radius: 4px;"
+        )
+
+    def _pick_color(self) -> None:
+        chosen = QColorDialog.getColor(QColor(self._color_hex), self, "Выберите цвет")
+        if chosen.isValid():
+            self.set_color(chosen.name())
 
 
 class SettingsDialog(QDialog):
@@ -75,6 +108,20 @@ class SettingsDialog(QDialog):
         appearance_form.addRow("Масштаб интерфейса:", self.scale_spin)
         appearance_form.addRow("Порядок панелей:", self.panel_order_edit)
 
+        self.accent_cpu_button = ColorButton(current.accent_cpu)
+        self.accent_mem_button = ColorButton(current.accent_mem)
+        self.accent_net_button = ColorButton(current.accent_net)
+        self.accent_disk_button = ColorButton(current.accent_disk)
+        self.reset_theme_button = QPushButton("Сбросить тему")
+        self.reset_theme_button.clicked.connect(self._reset_theme)
+
+        theme_form = QFormLayout()
+        theme_form.addRow("Цвет CPU:", self.accent_cpu_button)
+        theme_form.addRow("Цвет RAM:", self.accent_mem_button)
+        theme_form.addRow("Цвет сети:", self.accent_net_button)
+        theme_form.addRow("Цвет дисков:", self.accent_disk_button)
+        theme_form.addRow(self.reset_theme_button)
+
         self.disk_filter_edit = QLineEdit(current.disk_filter)
         self.disk_filter_edit.setPlaceholderText("например: /, /home (пусто = все)")
 
@@ -95,6 +142,7 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(_wrap(general_form), "Основное")
         tabs.addTab(_wrap(appearance_form), "Внешний вид")
+        tabs.addTab(_wrap(theme_form), "Тема")
         tabs.addTab(_wrap(data_form), "Данные")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -104,6 +152,12 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
         layout.addWidget(buttons)
+
+    def _reset_theme(self) -> None:
+        self.accent_cpu_button.set_color(theme.ACCENT_CPU)
+        self.accent_mem_button.set_color(theme.ACCENT_MEM)
+        self.accent_net_button.set_color(theme.ACCENT_NET)
+        self.accent_disk_button.set_color(theme.ACCENT_DISK)
 
     def result_settings(self, base: AppSettings) -> AppSettings:
         warn = self.warn_spin.value()
@@ -124,6 +178,10 @@ class SettingsDialog(QDialog):
             net_interfaces=self.net_interfaces_edit.text(),
             ui_scale_percent=self.scale_spin.value(),
             panel_order=self.panel_order_edit.text(),
+            accent_cpu=self.accent_cpu_button.color_hex(),
+            accent_mem=self.accent_mem_button.color_hex(),
+            accent_net=self.accent_net_button.color_hex(),
+            accent_disk=self.accent_disk_button.color_hex(),
         )
 
 

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSettings
 
+from ui.widget import theme
+
 MIN_INTERVAL_MS = 200
 MAX_INTERVAL_MS = 5000
 DEFAULT_INTERVAL_MS = 1000
@@ -29,6 +31,10 @@ class AppSettings:
     net_interfaces: str = ""
     ui_scale_percent: int = DEFAULT_SCALE_PERCENT
     panel_order: str = DEFAULT_PANEL_ORDER
+    accent_cpu: str = theme.ACCENT_CPU
+    accent_mem: str = theme.ACCENT_MEM
+    accent_net: str = theme.ACCENT_NET
+    accent_disk: str = theme.ACCENT_DISK
 
 
 def _to_bool(value: object) -> bool:
@@ -51,6 +57,10 @@ def load_settings(settings: QSettings) -> AppSettings:
         net_interfaces=str(settings.value("settings/net_interfaces", "")),
         ui_scale_percent=int(settings.value("settings/ui_scale_percent", DEFAULT_SCALE_PERCENT)),
         panel_order=str(settings.value("settings/panel_order", DEFAULT_PANEL_ORDER)),
+        accent_cpu=str(settings.value("settings/accent_cpu", theme.ACCENT_CPU)),
+        accent_mem=str(settings.value("settings/accent_mem", theme.ACCENT_MEM)),
+        accent_net=str(settings.value("settings/accent_net", theme.ACCENT_NET)),
+        accent_disk=str(settings.value("settings/accent_disk", theme.ACCENT_DISK)),
     )
 
 
@@ -67,3 +77,7 @@ def save_settings(settings: QSettings, app_settings: AppSettings) -> None:
     settings.setValue("settings/net_interfaces", app_settings.net_interfaces)
     settings.setValue("settings/ui_scale_percent", app_settings.ui_scale_percent)
     settings.setValue("settings/panel_order", app_settings.panel_order)
+    settings.setValue("settings/accent_cpu", app_settings.accent_cpu)
+    settings.setValue("settings/accent_mem", app_settings.accent_mem)
+    settings.setValue("settings/accent_net", app_settings.accent_net)
+    settings.setValue("settings/accent_disk", app_settings.accent_disk)

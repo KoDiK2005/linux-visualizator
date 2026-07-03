@@ -126,6 +126,16 @@ class MainWindow(QWidget):
         self.net_panel.set_interface_filter(self._app_settings.net_interfaces)
         self.net_panel.set_unit_mode(self._app_settings.net_unit)
 
+        self.cpu_panel.set_color(self._app_settings.accent_cpu)
+        self.mem_panel.set_color(self._app_settings.accent_mem)
+        self.disk_usage_panel.set_color(self._app_settings.accent_disk)
+        self.net_panel.set_colors(
+            self._app_settings.accent_net, theme.lighten(self._app_settings.accent_net)
+        )
+        self.disk_io_panel.set_colors(
+            self._app_settings.accent_disk, theme.lighten(self._app_settings.accent_disk)
+        )
+
     def _restore_position(self) -> None:
         saved = self._settings.value(SETTINGS_POSITION_KEY)
         if saved is not None:

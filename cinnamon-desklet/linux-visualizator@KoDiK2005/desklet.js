@@ -63,6 +63,30 @@ function lerpColor(c1, c2, t) {
     return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t), lerp(c1[3], c2[3], t)];
 }
 
+// Осветляет цвет к белому — используется для вторичной линии спарклайна (отправлено/запись),
+// когда основной акцент задаётся пользователем через один colorchooser на категорию.
+function lightenColor(color, amount) {
+    return lerpColor(color, [1, 1, 1, color[3]], amount);
+}
+
+// Cinnamon хранит colorchooser-настройки как "rgb(r,g,b)"/"rgba(r,g,b,a)" или hex.
+function parseColor(value, fallback) {
+    if (!value) return fallback;
+    let m = value.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
+    if (m) {
+        return [parseFloat(m[1]) / 255, parseFloat(m[2]) / 255, parseFloat(m[3]) / 255, m[4] !== undefined ? parseFloat(m[4]) : 1];
+    }
+    let hex = value.replace('#', '');
+    if (hex.length === 6 || hex.length === 8) {
+        let r = parseInt(hex.substr(0, 2), 16) / 255;
+        let g = parseInt(hex.substr(2, 2), 16) / 255;
+        let b = parseInt(hex.substr(4, 2), 16) / 255;
+        let a = hex.length === 8 ? parseInt(hex.substr(6, 2), 16) / 255 : 1;
+        return [r, g, b, a];
+    }
+    return fallback;
+}
+
 // Подмешивает жёлтый/красный к базовому цвету при высокой загрузке — быстрый визуальный сигнал.
 // Пороги настраиваются пользователем (warn-threshold/bad-threshold), по умолчанию 70/90.
 function severityColor(baseColor, percent, warnThreshold, badThreshold) {
@@ -315,6 +339,10 @@ LinuxVisualizatorDesklet.prototype = {
         this.settings.bindProperty(Settings.BindingDirection.IN, 'panel-order', 'panelOrder', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'warn-threshold', 'warnThreshold', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'bad-threshold', 'badThreshold', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'accent-cpu', 'accentCpu', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'accent-mem', 'accentMem', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'accent-net', 'accentNet', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'accent-disk', 'accentDisk', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu', 'showCpu', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'cpu-view', 'cpuView', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu-freq', 'showCpuFreq', this._onSettingsChanged);
@@ -426,6 +454,12 @@ LinuxVisualizatorDesklet.prototype = {
 
         this._lastTickTime = now;
         this._scale = (this.uiScalePercent || 100) / 100;
+        this._colorCpu = parseColor(this.accentCpu, COLOR_CPU);
+        this._colorMem = parseColor(this.accentMem, COLOR_MEM);
+        this._colorNetDown = parseColor(this.accentNet, COLOR_NET_DOWN);
+        this._colorNetUp = lightenColor(this._colorNetDown, 0.35);
+        this._colorDisk = parseColor(this.accentDisk, COLOR_DISK);
+        this._colorDiskWrite = lightenColor(this._colorDisk, 0.35);
         this._render();
         this._startAnimation();
 
@@ -484,23 +518,23 @@ LinuxVisualizatorDesklet.prototype = {
             if (this.showCpuTemp && this._cpuTempC !== null) statParts.push(Math.round(this._cpuTempC) + '°C');
 
             unordered.cpu = {
-                type: 'cpu', height: h, label: 'ПРОЦЕССОР', color: COLOR_CPU,
+                type: 'cpu', height: h, label: 'ПРОЦЕССОР', color: this._colorCpu,
                 view, statText: statParts.join('  '),
             };
         }
         if (this.showMem) {
             let h = HEADER_HEIGHT * s + BAR_HEIGHT * s + (this._hasSwap ? (BAR_HEIGHT + BAR_SPACING) * s : 0);
-            unordered.mem = { type: 'mem', height: h, label: 'ПАМЯТЬ', color: COLOR_MEM };
+            unordered.mem = { type: 'mem', height: h, label: 'ПАМЯТЬ', color: this._colorMem };
         }
         if (this.showNet) {
             let h = HEADER_HEIGHT * s + SPARK_HEIGHT * s;
-            unordered.net = { type: 'net', height: h, label: 'СЕТЬ', color: COLOR_NET_DOWN };
+            unordered.net = { type: 'net', height: h, label: 'СЕТЬ', color: this._colorNetDown };
         }
         if (this.showDisk) {
             let count = Math.max(this._diskPartitions.length, 1);
             let usageHeight = count * BAR_HEIGHT * s + (count - 1) * BAR_SPACING * s;
             let h = HEADER_HEIGHT * s + usageHeight + BAR_SPACING * s + SPARK_HEIGHT * s;
-            unordered.disk = { type: 'disk', height: h, label: 'ДИСКИ', color: COLOR_DISK, usageHeight };
+            unordered.disk = { type: 'disk', height: h, label: 'ДИСКИ', color: this._colorDisk, usageHeight };
         }
 
         let order = (this.panelOrder || '').split(',').map((k) => k.trim()).filter((k) => k);
@@ -569,11 +603,11 @@ LinuxVisualizatorDesklet.prototype = {
                 else this._drawCpuRings(ctx);
             } else if (section.type === 'mem') this._drawMemBars(ctx, contentWidth);
             else if (section.type === 'net') {
-                this._drawSparkline(ctx, contentWidth, this._netHistory.recv, this._netHistory.sent, COLOR_NET_DOWN, COLOR_NET_UP, '↓', '↑', this.netUnit);
+                this._drawSparkline(ctx, contentWidth, this._netHistory.recv, this._netHistory.sent, this._colorNetDown, this._colorNetUp, '↓', '↑', this.netUnit);
             } else if (section.type === 'disk') {
                 this._drawDiskUsage(ctx, contentWidth);
                 ctx.translate(0, section.usageHeight + BAR_SPACING * s);
-                this._drawSparkline(ctx, contentWidth, this._diskIoHistory.read, this._diskIoHistory.write, COLOR_DISK, COLOR_DISK_WRITE, 'R', 'W', 'bytes');
+                this._drawSparkline(ctx, contentWidth, this._diskIoHistory.read, this._diskIoHistory.write, this._colorDisk, this._colorDiskWrite, 'R', 'W', 'bytes');
             }
             ctx.restore();
 
@@ -644,7 +678,7 @@ LinuxVisualizatorDesklet.prototype = {
             ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
             ctx.stroke();
 
-            let color = severityColor(COLOR_CPU, percent, this.warnThreshold, this.badThreshold);
+            let color = severityColor(this._colorCpu, percent, this.warnThreshold, this.badThreshold);
             ctx.setSourceRGBA(color[0], color[1], color[2], color[3]);
             let startAngle = -Math.PI / 2;
             let endAngle = startAngle + Math.max(percent, 0.6) / 100 * 2 * Math.PI;
@@ -673,7 +707,7 @@ LinuxVisualizatorDesklet.prototype = {
             let percent = this._cpuSmoother.value(idx);
             let y = idx * (barHeight + barSpacing);
             let label = 'Core ' + idx + '  ' + Math.round(percent) + '%';
-            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_CPU, percent, this.warnThreshold, this.badThreshold), 1.0);
+            this._drawBar(ctx, y, width, percent, label, severityColor(this._colorCpu, percent, this.warnThreshold, this.badThreshold), 1.0);
         }
     },
 
@@ -681,7 +715,7 @@ LinuxVisualizatorDesklet.prototype = {
         let s = this._scale || 1;
         let plotTop = SPARK_LABEL_HEIGHT * s;
         let plotHeight = SPARK_HEIGHT * s - plotTop - 2;
-        this._drawLine(ctx, this._cpuHistory, 100, width, plotTop, plotHeight, severityColor(COLOR_CPU, this._cpuAverage, this.warnThreshold, this.badThreshold), true);
+        this._drawLine(ctx, this._cpuHistory, 100, width, plotTop, plotHeight, severityColor(this._colorCpu, this._cpuAverage, this.warnThreshold, this.badThreshold), true);
 
         ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
         ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
@@ -698,10 +732,10 @@ LinuxVisualizatorDesklet.prototype = {
         if (this._memTotalBytes) {
             ramLabel += '  (' + bytesToGB(this._memUsedBytes) + '/' + bytesToGB(this._memTotalBytes) + ' GB)';
         }
-        this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(COLOR_MEM, this._memSmoother.value, this.warnThreshold, this.badThreshold), 1.0);
+        this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(this._colorMem, this._memSmoother.value, this.warnThreshold, this.badThreshold), 1.0);
 
         if (this._hasSwap) {
-            this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', COLOR_MEM, 0.5);
+            this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', this._colorMem, 0.5);
         }
     },
 
@@ -713,7 +747,7 @@ LinuxVisualizatorDesklet.prototype = {
             let y = idx * (barHeight + barSpacing);
             let percent = this._diskSmoother.value(partition.mountpoint);
             let label = this._shortMountpoint(partition.mountpoint) + ' ' + Math.round(percent) + '%';
-            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_DISK, percent, this.warnThreshold, this.badThreshold), 1.0);
+            this._drawBar(ctx, y, width, percent, label, severityColor(this._colorDisk, percent, this.warnThreshold, this.badThreshold), 1.0);
         });
     },
 

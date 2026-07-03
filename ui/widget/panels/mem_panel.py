@@ -23,11 +23,16 @@ class MemPanel(QWidget):
         self._used_bytes = 0
         self._has_swap = False
         self._scale = 1.0
+        self._accent_color = theme.ACCENT_MEM
         self.setMinimumHeight(BAR_HEIGHT + 4)
 
     def set_scale(self, scale: float) -> None:
         self._scale = scale
         self.updateGeometry()
+        self.update()
+
+    def set_color(self, accent_color: str) -> None:
+        self._accent_color = accent_color
         self.update()
 
     def update_snapshot(self, memory: MemorySnapshot) -> None:
@@ -65,12 +70,12 @@ class MemPanel(QWidget):
 
         self._draw_bar(
             painter, 0, width, bar_height, self._mem_percent.value, ram_label,
-            severity_color(theme.ACCENT_MEM, self._mem_percent.value),
+            severity_color(self._accent_color, self._mem_percent.value),
         )
         if self._has_swap:
             self._draw_bar(
                 painter, bar_height + bar_spacing, width, bar_height, self._swap_percent.value,
-                f"SWAP {self._swap_percent.value:.0f}%", QColor(theme.ACCENT_MEM), dim=True,
+                f"SWAP {self._swap_percent.value:.0f}%", QColor(self._accent_color), dim=True,
             )
 
     def _draw_bar(

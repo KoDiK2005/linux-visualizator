@@ -23,11 +23,16 @@ class CpuPanel(QWidget):
         self._frequency_mhz: float | None = None
         self._temperature_c: float | None = None
         self._scale = 1.0
+        self._accent_color = theme.ACCENT_CPU
         self.setMinimumHeight(STATS_HEIGHT + RING_SIZE + 8)
 
     def set_scale(self, scale: float) -> None:
         self._scale = scale
         self.updateGeometry()
+        self.update()
+
+    def set_color(self, accent_color: str) -> None:
+        self._accent_color = accent_color
         self.update()
 
     def update_snapshot(self, cpu: CpuSnapshot) -> None:
@@ -76,7 +81,7 @@ class CpuPanel(QWidget):
             painter.setPen(bg_pen)
             painter.drawArc(rect, 0, 360 * 16)
 
-            fg_pen = QPen(severity_color(theme.ACCENT_CPU, percent), ring_thickness)
+            fg_pen = QPen(severity_color(self._accent_color, percent), ring_thickness)
             fg_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(fg_pen)
             span = int(-percent / 100 * 360 * 16)

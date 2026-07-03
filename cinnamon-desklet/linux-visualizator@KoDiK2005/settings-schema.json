@@ -65,6 +65,33 @@
         "tooltip": "Выше этого процента индикатор окрашивается в красный."
     },
 
+    "head-theme": {
+        "type": "header",
+        "description": "Цветовая тема"
+    },
+    "accent-cpu": {
+        "type": "colorchooser",
+        "default": "rgb(79,195,247)",
+        "description": "Цвет CPU"
+    },
+    "accent-mem": {
+        "type": "colorchooser",
+        "default": "rgb(129,199,132)",
+        "description": "Цвет RAM"
+    },
+    "accent-net": {
+        "type": "colorchooser",
+        "default": "rgb(255,183,77)",
+        "description": "Цвет сети",
+        "tooltip": "Линия «отправлено» рисуется осветлённым оттенком этого цвета."
+    },
+    "accent-disk": {
+        "type": "colorchooser",
+        "default": "rgb(186,104,200)",
+        "description": "Цвет дисков",
+        "tooltip": "Линия «запись» рисуется осветлённым оттенком этого цвета."
+    },
+
     "head-cpu": {
         "type": "header",
         "description": "Процессор"
