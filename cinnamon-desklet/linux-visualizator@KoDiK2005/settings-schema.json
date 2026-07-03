@@ -91,6 +91,11 @@
         "description": "Цвет дисков",
         "tooltip": "Линия «запись» рисуется осветлённым оттенком этого цвета."
     },
+    "accent-gpu": {
+        "type": "colorchooser",
+        "default": "rgb(77,208,225)",
+        "description": "Цвет GPU"
+    },
 
     "head-cpu": {
         "type": "header",
@@ -178,5 +183,16 @@
         "description": "Разделы дисков",
         "tooltip": "Подстроки точек монтирования через запятую, например: /, /home. Пусто — показывать все.",
         "dependency": "show-disk"
+    },
+
+    "head-gpu": {
+        "type": "header",
+        "description": "Видеокарта"
+    },
+    "show-gpu": {
+        "type": "switch",
+        "default": true,
+        "description": "Показывать GPU (если обнаружен)",
+        "tooltip": "Поддерживаются NVIDIA (nvidia-smi) и AMD (amdgpu). Если GPU не распознан, секция скрывается автоматически."
     }
 }

@@ -76,6 +76,8 @@ class SettingsDialog(QDialog):
         self.show_net_check.setChecked(current.show_net)
         self.show_disk_check = QCheckBox("Показывать диски")
         self.show_disk_check.setChecked(current.show_disk)
+        self.show_gpu_check = QCheckBox("Показывать GPU (если обнаружен)")
+        self.show_gpu_check.setChecked(current.show_gpu)
 
         general_form = QFormLayout()
         general_form.addRow("Интервал опроса:", self.interval_spin)
@@ -83,6 +85,7 @@ class SettingsDialog(QDialog):
         general_form.addRow(self.show_mem_check)
         general_form.addRow(self.show_net_check)
         general_form.addRow(self.show_disk_check)
+        general_form.addRow(self.show_gpu_check)
 
         self.warn_spin = QSpinBox()
         self.warn_spin.setRange(1, 99)
@@ -112,6 +115,7 @@ class SettingsDialog(QDialog):
         self.accent_mem_button = ColorButton(current.accent_mem)
         self.accent_net_button = ColorButton(current.accent_net)
         self.accent_disk_button = ColorButton(current.accent_disk)
+        self.accent_gpu_button = ColorButton(current.accent_gpu)
         self.reset_theme_button = QPushButton("Сбросить тему")
         self.reset_theme_button.clicked.connect(self._reset_theme)
 
@@ -120,6 +124,7 @@ class SettingsDialog(QDialog):
         theme_form.addRow("Цвет RAM:", self.accent_mem_button)
         theme_form.addRow("Цвет сети:", self.accent_net_button)
         theme_form.addRow("Цвет дисков:", self.accent_disk_button)
+        theme_form.addRow("Цвет GPU:", self.accent_gpu_button)
         theme_form.addRow(self.reset_theme_button)
 
         self.disk_filter_edit = QLineEdit(current.disk_filter)
@@ -158,6 +163,7 @@ class SettingsDialog(QDialog):
         self.accent_mem_button.set_color(theme.ACCENT_MEM)
         self.accent_net_button.set_color(theme.ACCENT_NET)
         self.accent_disk_button.set_color(theme.ACCENT_DISK)
+        self.accent_gpu_button.set_color(theme.ACCENT_GPU)
 
     def result_settings(self, base: AppSettings) -> AppSettings:
         warn = self.warn_spin.value()
@@ -171,6 +177,7 @@ class SettingsDialog(QDialog):
             show_mem=self.show_mem_check.isChecked(),
             show_net=self.show_net_check.isChecked(),
             show_disk=self.show_disk_check.isChecked(),
+            show_gpu=self.show_gpu_check.isChecked(),
             warn_threshold=warn,
             bad_threshold=bad,
             disk_filter=self.disk_filter_edit.text(),
@@ -182,6 +189,7 @@ class SettingsDialog(QDialog):
             accent_mem=self.accent_mem_button.color_hex(),
             accent_net=self.accent_net_button.color_hex(),
             accent_disk=self.accent_disk_button.color_hex(),
+            accent_gpu=self.accent_gpu_button.color_hex(),
         )
 
 

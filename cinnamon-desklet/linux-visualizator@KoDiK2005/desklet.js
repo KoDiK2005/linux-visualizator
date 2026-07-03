@@ -20,6 +20,7 @@ const COLOR_NET_DOWN = [0xff / 255, 0xb7 / 255, 0x4d / 255, 1];
 const COLOR_NET_UP = COLOR_CPU;
 const COLOR_DISK = [0xba / 255, 0x68 / 255, 0xc8 / 255, 1];
 const COLOR_DISK_WRITE = [0xe5 / 255, 0x73 / 255, 0x73 / 255, 1];
+const COLOR_GPU = [0x4d / 255, 0xd0 / 255, 0xe1 / 255, 1];
 const COLOR_WARN = [0xff / 255, 0xca / 255, 0x28 / 255, 1];
 const COLOR_BAD = [0xef / 255, 0x53 / 255, 0x50 / 255, 1];
 
@@ -319,6 +320,71 @@ function collectDiskIo(prevState, elapsedSec) {
     return { readRate, writeRate, state: { read: totalReadSectors, write: totalWriteSectors } };
 }
 
+// Поддерживает NVIDIA (nvidia-smi) и AMD (amdgpu sysfs). Если ни один распознанный GPU не
+// найден (например, чистый Intel iGPU без единого стандартного интерфейса загрузки),
+// возвращает null — секция GPU скрывается вместо показа нулей (аналог core/collectors/gpu.py).
+function collectGpuNvidia() {
+    try {
+        let argv = ['nvidia-smi', '--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu', '--format=csv,noheader,nounits'];
+        let proc = new Gio.Subprocess({ argv, flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE });
+        proc.init(null);
+        let [, stdout] = proc.communicate_utf8(null, null);
+        let line = (stdout || '').trim().split('\n')[0];
+        if (!line) return null;
+        let parts = line.split(',').map((p) => p.trim());
+        if (parts.length < 5) return null;
+        let percent = parseFloat(parts[1]);
+        if (isNaN(percent)) return null;
+        let memUsedBytes = parseFloat(parts[2]) * 1024 * 1024;
+        let memTotalBytes = parseFloat(parts[3]) * 1024 * 1024;
+        let temp = parseFloat(parts[4]);
+        return { name: parts[0], percent, memUsedBytes, memTotalBytes, temperatureC: isNaN(temp) ? null : temp };
+    } catch (e) {
+        return null;
+    }
+}
+
+function collectGpuAmd() {
+    let enumerator;
+    try {
+        enumerator = Gio.File.new_for_path('/sys/class/drm').enumerate_children(
+            'standard::name', Gio.FileQueryInfoFlags.NONE, null);
+    } catch (e) {
+        return null;
+    }
+    let info;
+    while ((info = enumerator.next_file(null)) !== null) {
+        let name = info.get_name();
+        if (!/^card\d+$/.test(name)) continue;
+        let devicePath = '/sys/class/drm/' + name + '/device';
+        let busyText = readFile(devicePath + '/gpu_busy_percent');
+        if (busyText === null) continue;
+        let percent = parseInt(busyText.trim());
+        if (isNaN(percent)) continue;
+
+        let memUsedBytes = parseInt(readFile(devicePath + '/mem_info_vram_used') || '') || 0;
+        let memTotalBytes = parseInt(readFile(devicePath + '/mem_info_vram_total') || '') || 0;
+        let temperatureC = null;
+        try {
+            let hwmonEnum = Gio.File.new_for_path(devicePath + '/hwmon').enumerate_children(
+                'standard::name', Gio.FileQueryInfoFlags.NONE, null);
+            let hwmonInfo = hwmonEnum.next_file(null);
+            if (hwmonInfo) {
+                let tempText = readFile(devicePath + '/hwmon/' + hwmonInfo.get_name() + '/temp1_input');
+                if (tempText) temperatureC = parseInt(tempText.trim()) / 1000;
+            }
+        } catch (e) {
+            // нет hwmon — температура недоступна для этой карты
+        }
+        return { name: 'AMD GPU', percent, memUsedBytes, memTotalBytes, temperatureC };
+    }
+    return null;
+}
+
+function collectGpu() {
+    return collectGpuNvidia() || collectGpuAmd();
+}
+
 // ---- десклет ----
 
 function LinuxVisualizatorDesklet(metadata, deskletId) {
@@ -353,6 +419,8 @@ LinuxVisualizatorDesklet.prototype = {
         this.settings.bindProperty(Settings.BindingDirection.IN, 'net-unit', 'netUnit', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-disk', 'showDisk', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'disk-filter', 'diskFilter', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'show-gpu', 'showGpu', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'accent-gpu', 'accentGpu', this._onSettingsChanged);
 
         this._cpuState = {};
         this._netState = null;
@@ -370,11 +438,13 @@ LinuxVisualizatorDesklet.prototype = {
         this._diskPartitions = [];
         this._netHistory = { recv: [], sent: [] };
         this._diskIoHistory = { read: [], write: [] };
+        this._gpu = null;
 
         this._cpuSmoother = new SmootherMap();
         this._memSmoother = new Smoother();
         this._swapSmoother = new Smoother();
         this._diskSmoother = new SmootherMap();
+        this._gpuSmoother = new Smoother();
         this._animationTimeoutId = null;
 
         this.window = new Clutter.Actor();
@@ -451,6 +521,12 @@ LinuxVisualizatorDesklet.prototype = {
             this._pushHistory(this._diskIoHistory.read, io.readRate);
             this._pushHistory(this._diskIoHistory.write, io.writeRate);
         }
+        if (this.showGpu) {
+            this._gpu = collectGpu();
+            if (this._gpu) this._gpuSmoother.setTarget(this._gpu.percent);
+        } else {
+            this._gpu = null;
+        }
 
         this._lastTickTime = now;
         this._scale = (this.uiScalePercent || 100) / 100;
@@ -460,6 +536,7 @@ LinuxVisualizatorDesklet.prototype = {
         this._colorNetUp = lightenColor(this._colorNetDown, 0.35);
         this._colorDisk = parseColor(this.accentDisk, COLOR_DISK);
         this._colorDiskWrite = lightenColor(this._colorDisk, 0.35);
+        this._colorGpu = parseColor(this.accentGpu, COLOR_GPU);
         this._render();
         this._startAnimation();
 
@@ -480,6 +557,7 @@ LinuxVisualizatorDesklet.prototype = {
         if (this._memSmoother.step()) changed = true;
         if (this._swapSmoother.step()) changed = true;
         if (this._diskSmoother.step()) changed = true;
+        if (this._gpuSmoother.step()) changed = true;
 
         if (changed) {
             this._render();
@@ -536,10 +614,14 @@ LinuxVisualizatorDesklet.prototype = {
             let h = HEADER_HEIGHT * s + usageHeight + BAR_SPACING * s + SPARK_HEIGHT * s;
             unordered.disk = { type: 'disk', height: h, label: 'ДИСКИ', color: this._colorDisk, usageHeight };
         }
+        if (this.showGpu && this._gpu) {
+            let h = HEADER_HEIGHT * s + BAR_HEIGHT * s;
+            unordered.gpu = { type: 'gpu', height: h, label: 'GPU', color: this._colorGpu };
+        }
 
         let order = (this.panelOrder || '').split(',').map((k) => k.trim()).filter((k) => k);
         let seen = new Set(order);
-        for (let key of ['cpu', 'mem', 'net', 'disk']) {
+        for (let key of ['cpu', 'mem', 'net', 'disk', 'gpu']) {
             if (!seen.has(key)) order.push(key);
         }
 
@@ -608,6 +690,8 @@ LinuxVisualizatorDesklet.prototype = {
                 this._drawDiskUsage(ctx, contentWidth);
                 ctx.translate(0, section.usageHeight + BAR_SPACING * s);
                 this._drawSparkline(ctx, contentWidth, this._diskIoHistory.read, this._diskIoHistory.write, this._colorDisk, this._colorDiskWrite, 'R', 'W', 'bytes');
+            } else if (section.type === 'gpu') {
+                this._drawGpuBar(ctx, contentWidth);
             }
             ctx.restore();
 
@@ -737,6 +821,19 @@ LinuxVisualizatorDesklet.prototype = {
         if (this._hasSwap) {
             this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', this._colorMem, 0.5);
         }
+    },
+
+    _drawGpuBar: function (ctx, width) {
+        if (!this._gpu) return;
+        let percent = this._gpuSmoother.value;
+        let label = 'GPU ' + Math.round(percent) + '%';
+        if (this._gpu.memTotalBytes) {
+            label += '  (' + bytesToGB(this._gpu.memUsedBytes) + '/' + bytesToGB(this._gpu.memTotalBytes) + ' GB)';
+        }
+        if (this._gpu.temperatureC !== null) {
+            label += '  ' + Math.round(this._gpu.temperatureC) + '°C';
+        }
+        this._drawBar(ctx, 0, width, percent, label, severityColor(this._colorGpu, percent, this.warnThreshold, this.badThreshold), 1.0);
     },
 
     _drawDiskUsage: function (ctx, width) {

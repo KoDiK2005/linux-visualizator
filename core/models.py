@@ -49,8 +49,18 @@ class DiskSnapshot:
 
 
 @dataclass
+class GpuSnapshot:
+    name: str
+    percent: float
+    memory_used_bytes: int
+    memory_total_bytes: int
+    temperature_c: float | None = None
+
+
+@dataclass
 class SystemSnapshot:
     cpu: CpuSnapshot
     memory: MemorySnapshot
     network: NetworkSnapshot
     disk: DiskSnapshot
+    gpu: GpuSnapshot | None = None

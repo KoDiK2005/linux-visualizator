@@ -3,7 +3,7 @@
 from collections import deque
 from collections.abc import Callable
 
-from core.collectors import cpu, memory
+from core.collectors import cpu, gpu, memory
 from core.collectors.disk import DiskCollector
 from core.collectors.network import NetworkCollector
 from core.config import SamplerConfig
@@ -31,6 +31,7 @@ class Sampler:
             memory=memory.collect(),
             network=self._network_collector.collect(),
             disk=self._disk_collector.collect(),
+            gpu=gpu.collect(),
         )
         self.history.append(snapshot)
         for listener in self._listeners:

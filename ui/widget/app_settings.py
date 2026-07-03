@@ -24,6 +24,7 @@ class AppSettings:
     show_mem: bool = True
     show_net: bool = True
     show_disk: bool = True
+    show_gpu: bool = True
     warn_threshold: int = 70
     bad_threshold: int = 90
     disk_filter: str = ""
@@ -35,6 +36,7 @@ class AppSettings:
     accent_mem: str = theme.ACCENT_MEM
     accent_net: str = theme.ACCENT_NET
     accent_disk: str = theme.ACCENT_DISK
+    accent_gpu: str = theme.ACCENT_GPU
 
 
 def _to_bool(value: object) -> bool:
@@ -50,6 +52,7 @@ def load_settings(settings: QSettings) -> AppSettings:
         show_mem=_to_bool(settings.value("settings/show_mem", True)),
         show_net=_to_bool(settings.value("settings/show_net", True)),
         show_disk=_to_bool(settings.value("settings/show_disk", True)),
+        show_gpu=_to_bool(settings.value("settings/show_gpu", True)),
         warn_threshold=int(settings.value("settings/warn_threshold", 70)),
         bad_threshold=int(settings.value("settings/bad_threshold", 90)),
         disk_filter=str(settings.value("settings/disk_filter", "")),
@@ -61,6 +64,7 @@ def load_settings(settings: QSettings) -> AppSettings:
         accent_mem=str(settings.value("settings/accent_mem", theme.ACCENT_MEM)),
         accent_net=str(settings.value("settings/accent_net", theme.ACCENT_NET)),
         accent_disk=str(settings.value("settings/accent_disk", theme.ACCENT_DISK)),
+        accent_gpu=str(settings.value("settings/accent_gpu", theme.ACCENT_GPU)),
     )
 
 
@@ -70,6 +74,7 @@ def save_settings(settings: QSettings, app_settings: AppSettings) -> None:
     settings.setValue("settings/show_mem", app_settings.show_mem)
     settings.setValue("settings/show_net", app_settings.show_net)
     settings.setValue("settings/show_disk", app_settings.show_disk)
+    settings.setValue("settings/show_gpu", app_settings.show_gpu)
     settings.setValue("settings/warn_threshold", app_settings.warn_threshold)
     settings.setValue("settings/bad_threshold", app_settings.bad_threshold)
     settings.setValue("settings/disk_filter", app_settings.disk_filter)
@@ -81,3 +86,4 @@ def save_settings(settings: QSettings, app_settings: AppSettings) -> None:
     settings.setValue("settings/accent_mem", app_settings.accent_mem)
     settings.setValue("settings/accent_net", app_settings.accent_net)
     settings.setValue("settings/accent_disk", app_settings.accent_disk)
+    settings.setValue("settings/accent_gpu", app_settings.accent_gpu)

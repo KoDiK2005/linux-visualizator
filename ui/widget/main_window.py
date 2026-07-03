@@ -11,6 +11,7 @@ from ui.widget.app_settings import AppSettings, load_settings, save_settings
 from ui.widget.panels.cpu_panel import CpuPanel
 from ui.widget.panels.disk_io_panel import DiskIoPanel
 from ui.widget.panels.disk_usage_panel import DiskUsagePanel
+from ui.widget.panels.gpu_panel import GpuPanel
 from ui.widget.panels.mem_panel import MemPanel
 from ui.widget.panels.net_panel import NetPanel
 from ui.widget.settings_dialog import SettingsDialog
@@ -47,11 +48,14 @@ class MainWindow(QWidget):
         self.net_panel = NetPanel()
         self.disk_usage_panel = DiskUsagePanel()
         self.disk_io_panel = DiskIoPanel()
+        self.gpu_panel = GpuPanel()
+        self._gpu_present = False
         self._panel_groups = {
             "cpu": [self.cpu_panel],
             "mem": [self.mem_panel],
             "net": [self.net_panel],
             "disk": [self.disk_usage_panel, self.disk_io_panel],
+            "gpu": [self.gpu_panel],
         }
 
         self._layout = QVBoxLayout(self)
@@ -59,7 +63,7 @@ class MainWindow(QWidget):
         self._layout.setSpacing(10)
         for panel in (
             self.cpu_panel, self.mem_panel, self.net_panel,
-            self.disk_usage_panel, self.disk_io_panel,
+            self.disk_usage_panel, self.disk_io_panel, self.gpu_panel,
         ):
             self._layout.addWidget(panel)
 
@@ -88,6 +92,12 @@ class MainWindow(QWidget):
         self.net_panel.update_snapshot(snapshot.network)
         self.disk_usage_panel.update_snapshot(snapshot.disk)
         self.disk_io_panel.update_snapshot(snapshot.disk)
+        gpu_was_present = self._gpu_present
+        self._gpu_present = snapshot.gpu is not None
+        if snapshot.gpu is not None:
+            self.gpu_panel.update_snapshot(snapshot.gpu)
+        if gpu_was_present != self._gpu_present:
+            self._apply_panel_visibility()
         # Число ядер/разделов известно только после первого тика, поэтому окно
         # пересчитывает размер под их содержимое здесь.
         self.adjustSize()
@@ -95,6 +105,7 @@ class MainWindow(QWidget):
     def _animate(self) -> None:
         self.cpu_panel.animate()
         self.mem_panel.animate()
+        self.gpu_panel.animate()
 
     def _apply_panel_visibility(self) -> None:
         self.cpu_panel.setVisible(self._app_settings.show_cpu)
@@ -102,6 +113,7 @@ class MainWindow(QWidget):
         self.net_panel.setVisible(self._app_settings.show_net)
         self.disk_usage_panel.setVisible(self._app_settings.show_disk)
         self.disk_io_panel.setVisible(self._app_settings.show_disk)
+        self.gpu_panel.setVisible(self._app_settings.show_gpu and self._gpu_present)
 
     def _apply_panel_order(self) -> None:
         order = [key.strip() for key in self._app_settings.panel_order.split(",") if key.strip()]
@@ -122,6 +134,7 @@ class MainWindow(QWidget):
         self.net_panel.set_scale(scale)
         self.disk_usage_panel.set_scale(scale)
         self.disk_io_panel.set_scale(scale)
+        self.gpu_panel.set_scale(scale)
         self.disk_usage_panel.set_filter(self._app_settings.disk_filter)
         self.net_panel.set_interface_filter(self._app_settings.net_interfaces)
         self.net_panel.set_unit_mode(self._app_settings.net_unit)
@@ -135,6 +148,7 @@ class MainWindow(QWidget):
         self.disk_io_panel.set_colors(
             self._app_settings.accent_disk, theme.lighten(self._app_settings.accent_disk)
         )
+        self.gpu_panel.set_color(self._app_settings.accent_gpu)
 
     def _restore_position(self) -> None:
         saved = self._settings.value(SETTINGS_POSITION_KEY)
