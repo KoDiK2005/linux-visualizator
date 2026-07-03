@@ -64,10 +64,13 @@ function lerpColor(c1, c2, t) {
 }
 
 // Подмешивает жёлтый/красный к базовому цвету при высокой загрузке — быстрый визуальный сигнал.
-function severityColor(baseColor, percent) {
-    if (percent <= 70) return baseColor;
-    if (percent <= 90) return lerpColor(baseColor, COLOR_WARN, (percent - 70) / 20);
-    return lerpColor(COLOR_WARN, COLOR_BAD, Math.min(1, (percent - 90) / 10));
+// Пороги настраиваются пользователем (warn-threshold/bad-threshold), по умолчанию 70/90.
+function severityColor(baseColor, percent, warnThreshold, badThreshold) {
+    let warn = warnThreshold !== undefined ? warnThreshold : 70;
+    let bad = badThreshold !== undefined ? badThreshold : 90;
+    if (percent <= warn) return baseColor;
+    if (percent <= bad) return lerpColor(baseColor, COLOR_WARN, (percent - warn) / Math.max(bad - warn, 1));
+    return lerpColor(COLOR_WARN, COLOR_BAD, Math.min(1, (percent - bad) / 10));
 }
 
 // ---- сглаживание значений между тиками, для плавной анимации (аналог ui/widget/animation.py) ----
@@ -215,7 +218,7 @@ function collectNetwork(prevState, elapsedSec, interfaceFilter) {
     let text = readFile('/proc/net/dev');
     if (!text) return { recvRate: 0, sentRate: 0, state: prevState };
 
-    let filter = (interfaceFilter || '').trim();
+    let filterList = (interfaceFilter || '').split(',').map((s) => s.trim()).filter((s) => s);
     let totalRx = 0;
     let totalTx = 0;
     for (let line of text.split('\n').slice(2)) {
@@ -224,7 +227,7 @@ function collectNetwork(prevState, elapsedSec, interfaceFilter) {
         let parts = line.split(/[:\s]+/);
         if (parts.length < 10) continue;
         if (parts[0] === 'lo') continue;
-        if (filter && parts[0] !== filter) continue;
+        if (filterList.length && filterList.indexOf(parts[0]) === -1) continue;
         totalRx += parseInt(parts[1]) || 0;
         totalTx += parseInt(parts[9]) || 0;
     }
@@ -238,7 +241,8 @@ function collectNetwork(prevState, elapsedSec, interfaceFilter) {
     return { recvRate, sentRate, state: { rx: totalRx, tx: totalTx } };
 }
 
-function collectDiskUsage() {
+function collectDiskUsage(diskFilter) {
+    let filterList = (diskFilter || '').split(',').map((s) => s.trim()).filter((s) => s);
     let argv = [
         '/bin/df', '-B1', '--output=target,size,pcent',
         '-x', 'tmpfs', '-x', 'devtmpfs', '-x', 'squashfs', '-x', 'overlay',
@@ -259,6 +263,7 @@ function collectDiskUsage() {
             let size = parseInt(parts[1]);
             let percent = parseFloat(parts[2].replace('%', ''));
             if (isNaN(size) || size < MIN_PARTITION_BYTES || isNaN(percent)) continue;
+            if (filterList.length && !filterList.some((f) => parts[0].indexOf(f) !== -1)) continue;
             partitions.push({ mountpoint: parts[0], percent });
         }
         return partitions;
@@ -306,6 +311,10 @@ LinuxVisualizatorDesklet.prototype = {
         this.settings.bindProperty(Settings.BindingDirection.IN, 'refresh-interval', 'refreshInterval', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'background-opacity', 'backgroundOpacity', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'click-command', 'clickCommand', null);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'ui-scale', 'uiScalePercent', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'panel-order', 'panelOrder', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'warn-threshold', 'warnThreshold', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'bad-threshold', 'badThreshold', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu', 'showCpu', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'cpu-view', 'cpuView', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-cpu-freq', 'showCpuFreq', this._onSettingsChanged);
@@ -313,7 +322,9 @@ LinuxVisualizatorDesklet.prototype = {
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-mem', 'showMem', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-net', 'showNet', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'network-interface', 'networkInterface', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'net-unit', 'netUnit', this._onSettingsChanged);
         this.settings.bindProperty(Settings.BindingDirection.IN, 'show-disk', 'showDisk', this._onSettingsChanged);
+        this.settings.bindProperty(Settings.BindingDirection.IN, 'disk-filter', 'diskFilter', this._onSettingsChanged);
 
         this._cpuState = {};
         this._netState = null;
@@ -404,7 +415,7 @@ LinuxVisualizatorDesklet.prototype = {
             this._pushHistory(this._netHistory.sent, net.sentRate);
         }
         if (this.showDisk) {
-            this._diskPartitions = collectDiskUsage();
+            this._diskPartitions = collectDiskUsage(this.diskFilter);
             this._diskPartitions.forEach((p) => this._diskSmoother.setTarget(p.mountpoint, p.percent));
             this._diskSmoother.pruneExcept(this._diskPartitions.map((p) => p.mountpoint));
             let io = collectDiskIo(this._diskIoState, elapsed);
@@ -414,6 +425,7 @@ LinuxVisualizatorDesklet.prototype = {
         }
 
         this._lastTickTime = now;
+        this._scale = (this.uiScalePercent || 100) / 100;
         this._render();
         this._startAnimation();
 
@@ -449,54 +461,66 @@ LinuxVisualizatorDesklet.prototype = {
     },
 
     _render: function () {
+        let s = this._scale || 1;
         let width = 220;
-        let y = MARGIN;
-        let sections = [];
+        let unordered = {};
 
         if (this.showCpu && this._cpuPercents.length) {
             let view = this.cpuView || 'rings';
             let h;
             if (view === 'bars') {
                 let count = this._cpuPercents.length;
-                h = HEADER_HEIGHT + count * BAR_HEIGHT + (count - 1) * BAR_SPACING;
+                h = HEADER_HEIGHT * s + count * BAR_HEIGHT * s + (count - 1) * BAR_SPACING * s;
             } else if (view === 'graph') {
-                h = HEADER_HEIGHT + SPARK_HEIGHT;
+                h = HEADER_HEIGHT * s + SPARK_HEIGHT * s;
             } else {
-                let ringsWidth = this._cpuPercents.length * (RING_SIZE + RING_SPACING) + RING_SPACING;
+                let ringsWidth = this._cpuPercents.length * (RING_SIZE * s + RING_SPACING * s) + RING_SPACING * s;
                 width = Math.max(width, ringsWidth);
-                h = HEADER_HEIGHT + RING_SIZE + 6;
+                h = HEADER_HEIGHT * s + RING_SIZE * s + 6;
             }
 
             let statParts = [Math.round(this._cpuAverage) + '%'];
             if (this.showCpuFreq && this._cpuFreqMHz) statParts.push((this._cpuFreqMHz / 1000).toFixed(1) + ' GHz');
             if (this.showCpuTemp && this._cpuTempC !== null) statParts.push(Math.round(this._cpuTempC) + '°C');
 
-            sections.push({
-                type: 'cpu', y, height: h, label: 'ПРОЦЕССОР', color: COLOR_CPU,
+            unordered.cpu = {
+                type: 'cpu', height: h, label: 'ПРОЦЕССОР', color: COLOR_CPU,
                 view, statText: statParts.join('  '),
-            });
-            y += h + SECTION_SPACING;
+            };
         }
         if (this.showMem) {
-            let h = HEADER_HEIGHT + BAR_HEIGHT + (this._hasSwap ? BAR_HEIGHT + BAR_SPACING : 0);
-            sections.push({ type: 'mem', y, height: h, label: 'ПАМЯТЬ', color: COLOR_MEM });
-            y += h + SECTION_SPACING;
+            let h = HEADER_HEIGHT * s + BAR_HEIGHT * s + (this._hasSwap ? (BAR_HEIGHT + BAR_SPACING) * s : 0);
+            unordered.mem = { type: 'mem', height: h, label: 'ПАМЯТЬ', color: COLOR_MEM };
         }
         if (this.showNet) {
-            let h = HEADER_HEIGHT + SPARK_HEIGHT;
-            sections.push({ type: 'net', y, height: h, label: 'СЕТЬ', color: COLOR_NET_DOWN });
-            y += h + SECTION_SPACING;
+            let h = HEADER_HEIGHT * s + SPARK_HEIGHT * s;
+            unordered.net = { type: 'net', height: h, label: 'СЕТЬ', color: COLOR_NET_DOWN };
         }
         if (this.showDisk) {
             let count = Math.max(this._diskPartitions.length, 1);
-            let usageHeight = count * BAR_HEIGHT + (count - 1) * BAR_SPACING;
-            let h = HEADER_HEIGHT + usageHeight + BAR_SPACING + SPARK_HEIGHT;
-            sections.push({ type: 'disk', y, height: h, label: 'ДИСКИ', color: COLOR_DISK, usageHeight });
-            y += h + SECTION_SPACING;
+            let usageHeight = count * BAR_HEIGHT * s + (count - 1) * BAR_SPACING * s;
+            let h = HEADER_HEIGHT * s + usageHeight + BAR_SPACING * s + SPARK_HEIGHT * s;
+            unordered.disk = { type: 'disk', height: h, label: 'ДИСКИ', color: COLOR_DISK, usageHeight };
         }
 
-        let totalWidth = width + MARGIN * 2;
-        let totalHeight = sections.length ? y - SECTION_SPACING + MARGIN : MARGIN * 2;
+        let order = (this.panelOrder || '').split(',').map((k) => k.trim()).filter((k) => k);
+        let seen = new Set(order);
+        for (let key of ['cpu', 'mem', 'net', 'disk']) {
+            if (!seen.has(key)) order.push(key);
+        }
+
+        let y = MARGIN * s;
+        let sections = [];
+        for (let key of order) {
+            let section = unordered[key];
+            if (!section) continue;
+            section.y = y;
+            sections.push(section);
+            y += section.height + SECTION_SPACING * s;
+        }
+
+        let totalWidth = width + MARGIN * s * 2;
+        let totalHeight = sections.length ? y - SECTION_SPACING * s + MARGIN * s : MARGIN * s * 2;
 
         let canvas = new Clutter.Canvas();
         canvas.set_size(totalWidth, totalHeight);
@@ -530,12 +554,14 @@ LinuxVisualizatorDesklet.prototype = {
         ctx.setLineWidth(1);
         ctx.stroke();
 
+        let s = this._scale || 1;
+
         sections.forEach((section, idx) => {
             ctx.save();
-            ctx.translate(MARGIN, section.y);
+            ctx.translate(MARGIN * s, section.y);
 
             this._drawSectionHeader(ctx, section.label, section.color, section.statText, contentWidth);
-            ctx.translate(0, HEADER_HEIGHT);
+            ctx.translate(0, HEADER_HEIGHT * s);
 
             if (section.type === 'cpu') {
                 if (section.view === 'bars') this._drawCpuBars(ctx, contentWidth);
@@ -543,43 +569,44 @@ LinuxVisualizatorDesklet.prototype = {
                 else this._drawCpuRings(ctx);
             } else if (section.type === 'mem') this._drawMemBars(ctx, contentWidth);
             else if (section.type === 'net') {
-                this._drawSparkline(ctx, contentWidth, this._netHistory.recv, this._netHistory.sent, COLOR_NET_DOWN, COLOR_NET_UP, '↓', '↑');
+                this._drawSparkline(ctx, contentWidth, this._netHistory.recv, this._netHistory.sent, COLOR_NET_DOWN, COLOR_NET_UP, '↓', '↑', this.netUnit);
             } else if (section.type === 'disk') {
                 this._drawDiskUsage(ctx, contentWidth);
-                ctx.translate(0, section.usageHeight + BAR_SPACING);
-                this._drawSparkline(ctx, contentWidth, this._diskIoHistory.read, this._diskIoHistory.write, COLOR_DISK, COLOR_DISK_WRITE, 'R', 'W');
+                ctx.translate(0, section.usageHeight + BAR_SPACING * s);
+                this._drawSparkline(ctx, contentWidth, this._diskIoHistory.read, this._diskIoHistory.write, COLOR_DISK, COLOR_DISK_WRITE, 'R', 'W', 'bytes');
             }
             ctx.restore();
 
             let isLast = idx === sections.length - 1;
             if (!isLast) {
-                let dividerY = section.y + section.height + SECTION_SPACING / 2;
+                let dividerY = section.y + section.height + (SECTION_SPACING * s) / 2;
                 ctx.setSourceRGBA(1, 1, 1, 0.06);
                 ctx.setLineWidth(1);
-                ctx.moveTo(MARGIN, dividerY);
-                ctx.lineTo(contentWidth + MARGIN, dividerY);
+                ctx.moveTo(MARGIN * s, dividerY);
+                ctx.lineTo(contentWidth + MARGIN * s, dividerY);
                 ctx.stroke();
             }
         });
     },
 
     _drawSectionHeader: function (ctx, label, color, statText, contentWidth) {
+        let s = this._scale || 1;
         ctx.newSubPath();
         ctx.setSourceRGBA(color[0], color[1], color[2], 0.9);
-        ctx.arc(3, 5, 3, 0, 2 * Math.PI);
+        ctx.arc(3 * s, 5 * s, 3 * s, 0, 2 * Math.PI);
         ctx.fill();
 
         ctx.setSourceRGBA(COLOR_LABEL[0], COLOR_LABEL[1], COLOR_LABEL[2], COLOR_LABEL[3]);
         ctx.selectFontFace(LABEL_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.BOLD);
-        ctx.setFontSize(9);
-        ctx.moveTo(12, 9);
+        ctx.setFontSize(9 * s);
+        ctx.moveTo(12 * s, 9 * s);
         ctx.showText(label);
 
         if (statText) {
             ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
-            ctx.setFontSize(8.5);
+            ctx.setFontSize(8.5 * s);
             let extents = ctx.textExtents(statText);
-            ctx.moveTo(contentWidth - extents.width - extents.xBearing, 9);
+            ctx.moveTo(contentWidth - extents.width - extents.xBearing, 9 * s);
             ctx.showText(statText);
         }
     },
@@ -594,15 +621,19 @@ LinuxVisualizatorDesklet.prototype = {
     },
 
     _drawCpuRings: function (ctx) {
-        let x = RING_SPACING / 2;
+        let s = this._scale || 1;
+        let ringSize = RING_SIZE * s;
+        let ringSpacing = RING_SPACING * s;
+        let ringThickness = RING_THICKNESS * s;
+        let x = ringSpacing / 2;
         let coreCount = this._cpuPercents.length;
         for (let idx = 0; idx < coreCount; idx++) {
             let percent = this._cpuSmoother.value(idx);
-            let cx = x + RING_SIZE / 2;
-            let cy = RING_SIZE / 2;
-            let radius = RING_SIZE / 2 - RING_THICKNESS / 2;
+            let cx = x + ringSize / 2;
+            let cy = ringSize / 2;
+            let radius = ringSize / 2 - ringThickness / 2;
 
-            ctx.setLineWidth(RING_THICKNESS);
+            ctx.setLineWidth(ringThickness);
             ctx.setLineCap(Cairo.LineCap.ROUND);
 
             // newSubPath обязателен: без него arc() продолжит путь от точки, оставленной
@@ -613,7 +644,7 @@ LinuxVisualizatorDesklet.prototype = {
             ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
             ctx.stroke();
 
-            let color = severityColor(COLOR_CPU, percent);
+            let color = severityColor(COLOR_CPU, percent, this.warnThreshold, this.badThreshold);
             ctx.setSourceRGBA(color[0], color[1], color[2], color[3]);
             let startAngle = -Math.PI / 2;
             let endAngle = startAngle + Math.max(percent, 0.6) / 100 * 2 * Math.PI;
@@ -623,56 +654,66 @@ LinuxVisualizatorDesklet.prototype = {
 
             ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
             ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.BOLD);
-            ctx.setFontSize(10);
+            ctx.setFontSize(10 * s);
             let label = Math.round(percent).toString();
             let extents = ctx.textExtents(label);
             ctx.moveTo(cx - extents.width / 2 - extents.xBearing, cy - extents.height / 2 - extents.yBearing);
             ctx.showText(label);
 
-            x += RING_SIZE + RING_SPACING;
+            x += ringSize + ringSpacing;
         }
     },
 
     _drawCpuBars: function (ctx, width) {
+        let s = this._scale || 1;
+        let barHeight = BAR_HEIGHT * s;
+        let barSpacing = BAR_SPACING * s;
         let coreCount = this._cpuPercents.length;
         for (let idx = 0; idx < coreCount; idx++) {
             let percent = this._cpuSmoother.value(idx);
-            let y = idx * (BAR_HEIGHT + BAR_SPACING);
+            let y = idx * (barHeight + barSpacing);
             let label = 'Core ' + idx + '  ' + Math.round(percent) + '%';
-            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_CPU, percent), 1.0);
+            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_CPU, percent, this.warnThreshold, this.badThreshold), 1.0);
         }
     },
 
     _drawCpuGraph: function (ctx, width) {
-        let plotTop = SPARK_LABEL_HEIGHT;
-        let plotHeight = SPARK_HEIGHT - plotTop - 2;
-        this._drawLine(ctx, this._cpuHistory, 100, width, plotTop, plotHeight, severityColor(COLOR_CPU, this._cpuAverage), true);
+        let s = this._scale || 1;
+        let plotTop = SPARK_LABEL_HEIGHT * s;
+        let plotHeight = SPARK_HEIGHT * s - plotTop - 2;
+        this._drawLine(ctx, this._cpuHistory, 100, width, plotTop, plotHeight, severityColor(COLOR_CPU, this._cpuAverage, this.warnThreshold, this.badThreshold), true);
 
         ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
         ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
-        ctx.setFontSize(9);
-        ctx.moveTo(0, SPARK_LABEL_HEIGHT - 4);
+        ctx.setFontSize(9 * s);
+        ctx.moveTo(0, plotTop - 4);
         ctx.showText('Средняя загрузка: ' + Math.round(this._cpuAverage) + '%');
     },
 
     _drawMemBars: function (ctx, width) {
+        let s = this._scale || 1;
+        let barHeight = BAR_HEIGHT * s;
+        let barSpacing = BAR_SPACING * s;
         let ramLabel = 'RAM ' + Math.round(this._memSmoother.value) + '%';
         if (this._memTotalBytes) {
             ramLabel += '  (' + bytesToGB(this._memUsedBytes) + '/' + bytesToGB(this._memTotalBytes) + ' GB)';
         }
-        this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(COLOR_MEM, this._memSmoother.value), 1.0);
+        this._drawBar(ctx, 0, width, this._memSmoother.value, ramLabel, severityColor(COLOR_MEM, this._memSmoother.value, this.warnThreshold, this.badThreshold), 1.0);
 
         if (this._hasSwap) {
-            this._drawBar(ctx, BAR_HEIGHT + BAR_SPACING, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', COLOR_MEM, 0.5);
+            this._drawBar(ctx, barHeight + barSpacing, width, this._swapSmoother.value, 'SWAP ' + Math.round(this._swapSmoother.value) + '%', COLOR_MEM, 0.5);
         }
     },
 
     _drawDiskUsage: function (ctx, width) {
+        let s = this._scale || 1;
+        let barHeight = BAR_HEIGHT * s;
+        let barSpacing = BAR_SPACING * s;
         this._diskPartitions.forEach((partition, idx) => {
-            let y = idx * (BAR_HEIGHT + BAR_SPACING);
+            let y = idx * (barHeight + barSpacing);
             let percent = this._diskSmoother.value(partition.mountpoint);
             let label = this._shortMountpoint(partition.mountpoint) + ' ' + Math.round(percent) + '%';
-            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_DISK, percent), 1.0);
+            this._drawBar(ctx, y, width, percent, label, severityColor(COLOR_DISK, percent, this.warnThreshold, this.badThreshold), 1.0);
         });
     },
 
@@ -683,30 +724,33 @@ LinuxVisualizatorDesklet.prototype = {
     },
 
     _drawBar: function (ctx, y, width, percent, label, color, alpha) {
+        let s = this._scale || 1;
+        let barHeight = BAR_HEIGHT * s;
         ctx.setSourceRGBA(1, 1, 1, 0.1);
-        this._roundedRect(ctx, 0, y, width, BAR_HEIGHT, BAR_HEIGHT / 2);
+        this._roundedRect(ctx, 0, y, width, barHeight, barHeight / 2);
         ctx.fill();
 
-        let fillWidth = Math.max((width * Math.min(Math.max(percent, 0), 100)) / 100, BAR_HEIGHT);
+        let fillWidth = Math.max((width * Math.min(Math.max(percent, 0), 100)) / 100, barHeight);
         let gradient = new Cairo.LinearGradient(0, y, fillWidth, y);
         gradient.addColorStopRGBA(0, color[0] * 0.65, color[1] * 0.65, color[2] * 0.65, color[3] * alpha);
         gradient.addColorStopRGBA(1, color[0], color[1], color[2], color[3] * alpha);
-        this._roundedRect(ctx, 0, y, fillWidth, BAR_HEIGHT, BAR_HEIGHT / 2);
+        this._roundedRect(ctx, 0, y, fillWidth, barHeight, barHeight / 2);
         ctx.setSource(gradient);
         ctx.fill();
 
         ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
         ctx.selectFontFace(NUMBER_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
-        ctx.setFontSize(8.5);
+        ctx.setFontSize(8.5 * s);
         let extents = ctx.textExtents(label);
-        ctx.moveTo(width / 2 - extents.width / 2 - extents.xBearing, y + BAR_HEIGHT / 2 - extents.height / 2 - extents.yBearing);
+        ctx.moveTo(width / 2 - extents.width / 2 - extents.xBearing, y + barHeight / 2 - extents.height / 2 - extents.yBearing);
         ctx.showText(label);
     },
 
-    _drawSparkline: function (ctx, width, historyA, historyB, colorA, colorB, symbolA, symbolB) {
+    _drawSparkline: function (ctx, width, historyA, historyB, colorA, colorB, symbolA, symbolB, unitMode) {
+        let s = this._scale || 1;
         let maxValue = Math.max(1, ...historyA, ...historyB);
-        let plotTop = SPARK_LABEL_HEIGHT;
-        let plotHeight = SPARK_HEIGHT - plotTop - 2;
+        let plotTop = SPARK_LABEL_HEIGHT * s;
+        let plotHeight = SPARK_HEIGHT * s - plotTop - 2;
 
         this._drawLine(ctx, historyA, maxValue, width, plotTop, plotHeight, colorA, true);
         this._drawLine(ctx, historyB, maxValue, width, plotTop, plotHeight, colorB, false);
@@ -715,10 +759,15 @@ LinuxVisualizatorDesklet.prototype = {
         let currentB = historyB.length ? historyB[historyB.length - 1] : 0;
         ctx.setSourceRGBA(COLOR_TEXT[0], COLOR_TEXT[1], COLOR_TEXT[2], COLOR_TEXT[3]);
         ctx.selectFontFace(SYMBOL_FONT, Cairo.FontSlant.NORMAL, Cairo.FontWeight.NORMAL);
-        ctx.setFontSize(9);
-        let label = symbolA + (currentA / 1024).toFixed(1) + ' KB/s  ' + symbolB + (currentB / 1024).toFixed(1) + ' KB/s';
-        ctx.moveTo(0, SPARK_LABEL_HEIGHT - 4);
+        ctx.setFontSize(9 * s);
+        let label = symbolA + this._formatRate(currentA, unitMode) + '  ' + symbolB + this._formatRate(currentB, unitMode);
+        ctx.moveTo(0, plotTop - 4);
         ctx.showText(label);
+    },
+
+    _formatRate: function (bytesPerSec, unitMode) {
+        if (unitMode === 'bits') return ((bytesPerSec * 8) / 1024).toFixed(1) + ' Kb/s';
+        return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
     },
 
     _drawLine: function (ctx, history, maxValue, width, plotTop, plotHeight, color, withFill) {

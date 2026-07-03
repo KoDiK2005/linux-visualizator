@@ -22,7 +22,13 @@ class CpuPanel(QWidget):
         self._total_percent = 0.0
         self._frequency_mhz: float | None = None
         self._temperature_c: float | None = None
+        self._scale = 1.0
         self.setMinimumHeight(STATS_HEIGHT + RING_SIZE + 8)
+
+    def set_scale(self, scale: float) -> None:
+        self._scale = scale
+        self.updateGeometry()
+        self.update()
 
     def update_snapshot(self, cpu: CpuSnapshot) -> None:
         self._smoothed.set_targets(cpu.per_core_percent)
@@ -38,32 +44,39 @@ class CpuPanel(QWidget):
         return changed
 
     def sizeHint(self) -> QSize:
+        ring_size = RING_SIZE * self._scale
+        ring_spacing = RING_SPACING * self._scale
+        stats_height = STATS_HEIGHT * self._scale
         count = max(len(self._smoothed.values), 1)
-        width = count * (RING_SIZE + RING_SPACING) + RING_SPACING
-        return QSize(width, STATS_HEIGHT + RING_SIZE + 8)
+        width = count * (ring_size + ring_spacing) + ring_spacing
+        return QSize(round(width), round(stats_height + ring_size + 8))
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        ring_size = RING_SIZE * self._scale
+        ring_spacing = RING_SPACING * self._scale
+        ring_thickness = RING_THICKNESS * self._scale
+        stats_height = STATS_HEIGHT * self._scale
 
         painter.setPen(QColor(theme.TEXT_COLOR))
-        painter.setFont(QFont(theme.FONT_FAMILY, 7))
+        painter.setFont(QFont(theme.FONT_FAMILY, round(7 * self._scale)))
         painter.drawText(
-            QRectF(0, 0, self.width(), STATS_HEIGHT), Qt.AlignLeft | Qt.AlignVCenter,
+            QRectF(0, 0, self.width(), stats_height), Qt.AlignLeft | Qt.AlignVCenter,
             self._stats_text(),
         )
 
-        painter.setFont(QFont(theme.FONT_FAMILY, 7))
-        x = RING_SPACING
+        painter.setFont(QFont(theme.FONT_FAMILY, round(7 * self._scale)))
+        x = ring_spacing
         for percent in self._smoothed.values:
-            rect = QRectF(x, STATS_HEIGHT + 4, RING_SIZE, RING_SIZE)
+            rect = QRectF(x, stats_height + 4, ring_size, ring_size)
 
-            bg_pen = QPen(QColor(255, 255, 255, 40), RING_THICKNESS)
+            bg_pen = QPen(QColor(255, 255, 255, 40), ring_thickness)
             bg_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(bg_pen)
             painter.drawArc(rect, 0, 360 * 16)
 
-            fg_pen = QPen(severity_color(theme.ACCENT_CPU, percent), RING_THICKNESS)
+            fg_pen = QPen(severity_color(theme.ACCENT_CPU, percent), ring_thickness)
             fg_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(fg_pen)
             span = int(-percent / 100 * 360 * 16)
@@ -72,7 +85,7 @@ class CpuPanel(QWidget):
             painter.setPen(QColor(theme.TEXT_COLOR))
             painter.drawText(rect, Qt.AlignCenter, f"{int(percent)}")
 
-            x += RING_SIZE + RING_SPACING
+            x += ring_size + ring_spacing
 
     def _stats_text(self) -> str:
         parts = [f"{self._total_percent:.0f}%"]

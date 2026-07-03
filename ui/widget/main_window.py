@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QVBoxLayout, QWidget
 from core.config import SamplerConfig
 from core.models import SystemSnapshot
 from core.sampler import Sampler
-from ui.widget import theme
+from ui.widget import severity, theme
 from ui.widget.app_settings import AppSettings, load_settings, save_settings
 from ui.widget.panels.cpu_panel import CpuPanel
 from ui.widget.panels.disk_io_panel import DiskIoPanel
@@ -47,18 +47,26 @@ class MainWindow(QWidget):
         self.net_panel = NetPanel()
         self.disk_usage_panel = DiskUsagePanel()
         self.disk_io_panel = DiskIoPanel()
+        self._panel_groups = {
+            "cpu": [self.cpu_panel],
+            "mem": [self.mem_panel],
+            "net": [self.net_panel],
+            "disk": [self.disk_usage_panel, self.disk_io_panel],
+        }
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
-        layout.addWidget(self.cpu_panel)
-        layout.addWidget(self.mem_panel)
-        layout.addWidget(self.net_panel)
-        layout.addWidget(self.disk_usage_panel)
-        layout.addWidget(self.disk_io_panel)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(16, 12, 16, 12)
+        self._layout.setSpacing(10)
+        for panel in (
+            self.cpu_panel, self.mem_panel, self.net_panel,
+            self.disk_usage_panel, self.disk_io_panel,
+        ):
+            self._layout.addWidget(panel)
 
-        self.setLayout(layout)
+        self.setLayout(self._layout)
         self._apply_panel_visibility()
+        self._apply_panel_order()
+        self._apply_appearance_settings()
         self.adjustSize()
         self._restore_position()
 
@@ -95,6 +103,29 @@ class MainWindow(QWidget):
         self.disk_usage_panel.setVisible(self._app_settings.show_disk)
         self.disk_io_panel.setVisible(self._app_settings.show_disk)
 
+    def _apply_panel_order(self) -> None:
+        order = [key.strip() for key in self._app_settings.panel_order.split(",") if key.strip()]
+        seen = set(order)
+        order += [key for key in self._panel_groups if key not in seen]
+        for key in order:
+            for panel in self._panel_groups.get(key, []):
+                self._layout.removeWidget(panel)
+                self._layout.addWidget(panel)
+
+    def _apply_appearance_settings(self) -> None:
+        severity.set_thresholds(
+            self._app_settings.warn_threshold, self._app_settings.bad_threshold
+        )
+        scale = self._app_settings.ui_scale_percent / 100.0
+        self.cpu_panel.set_scale(scale)
+        self.mem_panel.set_scale(scale)
+        self.net_panel.set_scale(scale)
+        self.disk_usage_panel.set_scale(scale)
+        self.disk_io_panel.set_scale(scale)
+        self.disk_usage_panel.set_filter(self._app_settings.disk_filter)
+        self.net_panel.set_interface_filter(self._app_settings.net_interfaces)
+        self.net_panel.set_unit_mode(self._app_settings.net_unit)
+
     def _restore_position(self) -> None:
         saved = self._settings.value(SETTINGS_POSITION_KEY)
         if saved is not None:
@@ -125,6 +156,8 @@ class MainWindow(QWidget):
         save_settings(self._settings, new_settings)
 
         self._apply_panel_visibility()
+        self._apply_panel_order()
+        self._apply_appearance_settings()
         self.adjustSize()
         self._sample_timer.setInterval(new_settings.interval_ms)
         self._sampler.config.interval_ms = new_settings.interval_ms

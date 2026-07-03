@@ -22,7 +22,13 @@ class MemPanel(QWidget):
         self._total_bytes = 0
         self._used_bytes = 0
         self._has_swap = False
+        self._scale = 1.0
         self.setMinimumHeight(BAR_HEIGHT + 4)
+
+    def set_scale(self, scale: float) -> None:
+        self._scale = scale
+        self.updateGeometry()
+        self.update()
 
     def update_snapshot(self, memory: MemorySnapshot) -> None:
         self._mem_percent.set_target(memory.percent)
@@ -39,13 +45,17 @@ class MemPanel(QWidget):
         return changed
 
     def sizeHint(self) -> QSize:
-        height = BAR_HEIGHT + (BAR_HEIGHT + BAR_SPACING if self._has_swap else 0) + 4
-        return QSize(200, height)
+        bar_height = BAR_HEIGHT * self._scale
+        bar_spacing = BAR_SPACING * self._scale
+        height = bar_height + (bar_height + bar_spacing if self._has_swap else 0) + 4
+        return QSize(200, round(height))
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         width = self.width()
+        bar_height = BAR_HEIGHT * self._scale
+        bar_spacing = BAR_SPACING * self._scale
 
         ram_label = f"RAM {self._mem_percent.value:.0f}%"
         if self._total_bytes:
@@ -54,20 +64,20 @@ class MemPanel(QWidget):
             ram_label += f"  ({used_gb:.1f}/{total_gb:.1f} GB)"
 
         self._draw_bar(
-            painter, 0, width, self._mem_percent.value, ram_label,
+            painter, 0, width, bar_height, self._mem_percent.value, ram_label,
             severity_color(theme.ACCENT_MEM, self._mem_percent.value),
         )
         if self._has_swap:
             self._draw_bar(
-                painter, BAR_HEIGHT + BAR_SPACING, width, self._swap_percent.value,
+                painter, bar_height + bar_spacing, width, bar_height, self._swap_percent.value,
                 f"SWAP {self._swap_percent.value:.0f}%", QColor(theme.ACCENT_MEM), dim=True,
             )
 
     def _draw_bar(
-        self, painter: QPainter, y: float, width: float, percent: float, label: str,
-        color: QColor, dim: bool = False,
+        self, painter: QPainter, y: float, width: float, bar_height: float, percent: float,
+        label: str, color: QColor, dim: bool = False,
     ) -> None:
-        bg_rect = QRectF(0, y, width, BAR_HEIGHT)
+        bg_rect = QRectF(0, y, width, bar_height)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(255, 255, 255, 30))
         painter.drawRoundedRect(bg_rect, 4, 4)
@@ -76,10 +86,10 @@ class MemPanel(QWidget):
         if dim:
             fill_color.setAlpha(140)
         fill_width = width * min(percent, 100.0) / 100.0
-        fill_rect = QRectF(0, y, fill_width, BAR_HEIGHT)
+        fill_rect = QRectF(0, y, fill_width, bar_height)
         painter.setBrush(fill_color)
         painter.drawRoundedRect(fill_rect, 4, 4)
 
         painter.setPen(QColor(theme.TEXT_COLOR))
-        painter.setFont(QFont(theme.FONT_FAMILY, 6))
+        painter.setFont(QFont(theme.FONT_FAMILY, round(6 * self._scale)))
         painter.drawText(bg_rect, Qt.AlignCenter, label)

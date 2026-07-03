@@ -28,6 +28,42 @@
         "description": "Команда по клику",
         "tooltip": "Запускается по левому клику на десклете. Пусто — отключить."
     },
+    "ui-scale": {
+        "type": "spinbutton",
+        "default": 100,
+        "min": 75,
+        "max": 150,
+        "step": 5,
+        "unit": "%",
+        "description": "Масштаб интерфейса",
+        "tooltip": "Размер колец/полос/шрифтов относительно стандартного."
+    },
+    "panel-order": {
+        "type": "entry",
+        "default": "cpu,mem,net,disk",
+        "description": "Порядок секций",
+        "tooltip": "Через запятую: cpu,mem,net,disk. Пропущенные секции добавляются в конец."
+    },
+    "warn-threshold": {
+        "type": "spinbutton",
+        "default": 70,
+        "min": 1,
+        "max": 99,
+        "step": 1,
+        "unit": "%",
+        "description": "Жёлтый порог",
+        "tooltip": "Выше этого процента индикатор окрашивается в жёлтый."
+    },
+    "bad-threshold": {
+        "type": "spinbutton",
+        "default": 90,
+        "min": 2,
+        "max": 100,
+        "step": 1,
+        "unit": "%",
+        "description": "Красный порог",
+        "tooltip": "Выше этого процента индикатор окрашивается в красный."
+    },
 
     "head-cpu": {
         "type": "header",
@@ -85,8 +121,18 @@
     "network-interface": {
         "type": "entry",
         "default": "",
-        "description": "Сетевой интерфейс",
-        "tooltip": "Например, wlan0 или enp3s0. Пусто — суммировать все интерфейсы, кроме lo.",
+        "description": "Сетевые интерфейсы",
+        "tooltip": "Например, wlan0 или enp3s0,wlan0 через запятую. Пусто — суммировать все интерфейсы, кроме lo.",
+        "dependency": "show-net"
+    },
+    "net-unit": {
+        "type": "combobox",
+        "default": "bytes",
+        "options": {
+            "Байты (KB/s)": "bytes",
+            "Биты (Kb/s)": "bits"
+        },
+        "description": "Единицы измерения сети",
         "dependency": "show-net"
     },
 
@@ -98,5 +144,12 @@
         "type": "switch",
         "default": true,
         "description": "Показывать диски"
+    },
+    "disk-filter": {
+        "type": "entry",
+        "default": "",
+        "description": "Разделы дисков",
+        "tooltip": "Подстроки точек монтирования через запятую, например: /, /home. Пусто — показывать все.",
+        "dependency": "show-disk"
     }
 }
